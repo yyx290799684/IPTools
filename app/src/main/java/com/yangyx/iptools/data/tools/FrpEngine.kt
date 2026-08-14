@@ -2,9 +2,11 @@ package com.yangyx.iptools.data.tools
 
 import android.content.Context
 import android.util.Log
+import com.yangyx.iptools.service.IpToolsBackgroundService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -52,12 +54,11 @@ data class FrpClientConfig(
 )
 
 data class FrpServerConfig(
-    val bindPort: Int = 0,
+    val bindPort: Int = 7000,
     val authToken: String = "",
-    val dashboardPort: Int = 0,
-    val dashboardUser: String = "",
-    val dashboardPwd: String = "",
-    val maxPoolCount: Int = 0
+    val dashboardPort: Int = 7500,
+    val dashboardUser: String = "admin",
+    val dashboardPwd: String = "admin"
 )
 
 data class FrpStatus(
@@ -74,11 +75,13 @@ object FrpEngine {
     private val isServerRunning = AtomicBoolean(false)
     private val isClientRunning = AtomicBoolean(false)
 
+    private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var serverJob: Job? = null
     private var clientJob: Job? = null
 
     private var frpcProcess: Process? = null
     private var frpsProcess: Process? = null
+    private var appContext: Context? = null
 
     private val _serverStatus = MutableStateFlow(FrpStatus())
     val serverStatus: StateFlow<FrpStatus> = _serverStatus.asStateFlow()
@@ -555,7 +558,7 @@ object FrpEngine {
     fun generateFrpsIni(config: FrpServerConfig): String {
         val sb = StringBuilder()
         sb.append("[common]\n")
-        sb.append("bind_port = ").append(config.bindPort).append("\n")
+        sb.append("bind_port = ").append(if (config.bindPort > 0) config.bindPort else 7000).append("\n")
         if (config.authToken.isNotBlank()) {
             sb.append("token = ").append(config.authToken).append("\n")
         }
@@ -564,7 +567,6 @@ object FrpEngine {
             sb.append("dashboard_user = ").append(config.dashboardUser.ifBlank { "admin" }).append("\n")
             sb.append("dashboard_pwd = ").append(config.dashboardPwd.ifBlank { "admin" }).append("\n")
         }
-        sb.append("max_pool_count = 5\n")
         return sb.toString()
     }
 
@@ -572,7 +574,8 @@ object FrpEngine {
     // FRP SERVER (frps) USING OFFICIAL NATIVE BINARY
     // =========================================================================
 
-    fun startServer(context: Context, scope: CoroutineScope, config: FrpServerConfig) {
+    fun startServer(context: Context, scope: CoroutineScope? = null, config: FrpServerConfig) {
+        appContext = context.applicationContext
         if (isServerRunning.getAndSet(true)) {
             stopServer()
         }
@@ -580,8 +583,14 @@ object FrpEngine {
         _serverLogs.value = emptyList()
 
         addServerLog("🚀 正在初始化官方 Native FRP 服务端引擎 (fatedier/frps)...")
+        IpToolsBackgroundService.startOrUpdateTask(
+            context = context,
+            taskKey = IpToolsBackgroundService.KEY_FRP_SERVER,
+            taskDescription = "FRP 服务端: 监听 :${config.bindPort} | Dashboard :${config.dashboardPort}"
+        )
 
-        serverJob = scope.launch(Dispatchers.IO) {
+        val runScope = engineScope
+        serverJob = runScope.launch(Dispatchers.IO) {
             try {
                 val iniContent = generateFrpsIni(config)
                 val iniFile = File(context.filesDir, "frps.ini")
@@ -649,6 +658,9 @@ object FrpEngine {
             } finally {
                 _serverStatus.update { it.copy(isRunning = false, activeTunnels = emptyList()) }
                 isServerRunning.set(false)
+                appContext?.let { ctx ->
+                    IpToolsBackgroundService.removeTask(ctx, IpToolsBackgroundService.KEY_FRP_SERVER)
+                }
             }
         }
     }
@@ -662,6 +674,9 @@ object FrpEngine {
         frpsProcess = null
         serverJob?.cancel()
         _serverStatus.update { it.copy(isRunning = false, activeTunnels = emptyList()) }
+        appContext?.let { ctx ->
+            IpToolsBackgroundService.removeTask(ctx, IpToolsBackgroundService.KEY_FRP_SERVER)
+        }
         addServerLog("🛑 FRP 服务端已停止")
     }
 
@@ -669,7 +684,8 @@ object FrpEngine {
     // FRP CLIENT (frpc) USING OFFICIAL NATIVE BINARY
     // =========================================================================
 
-    fun startClient(context: Context, scope: CoroutineScope, config: FrpClientConfig) {
+    fun startClient(context: Context, scope: CoroutineScope? = null, config: FrpClientConfig) {
+        appContext = context.applicationContext
         if (isClientRunning.getAndSet(true)) {
             stopClient()
         }
@@ -680,7 +696,14 @@ object FrpEngine {
         addClientLog("🚀 正在初始化官方 Native FRP 客户端引擎 (fatedier/frpc)...")
         addClientLog("🎯 目标服务端: [${config.serverAddr}:${config.serverPort}], 启用映射规则数: $enabledCount")
 
-        clientJob = scope.launch(Dispatchers.IO) {
+        IpToolsBackgroundService.startOrUpdateTask(
+            context = context,
+            taskKey = IpToolsBackgroundService.KEY_FRP_CLIENT,
+            taskDescription = "FRP 客户端: 连接 ${config.serverAddr}:${config.serverPort} (${enabledCount}条规则)"
+        )
+
+        val runScope = engineScope
+        clientJob = runScope.launch(Dispatchers.IO) {
             try {
                 val iniContent = generateFrpcIni(config)
                 val iniFile = File(context.filesDir, "frpc.ini")
@@ -753,6 +776,9 @@ object FrpEngine {
             } finally {
                 _clientStatus.update { it.copy(isRunning = false, activeTunnels = emptyList()) }
                 isClientRunning.set(false)
+                appContext?.let { ctx ->
+                    IpToolsBackgroundService.removeTask(ctx, IpToolsBackgroundService.KEY_FRP_CLIENT)
+                }
             }
         }
     }
@@ -766,6 +792,9 @@ object FrpEngine {
         frpcProcess = null
         clientJob?.cancel()
         _clientStatus.update { it.copy(isRunning = false, activeTunnels = emptyList()) }
+        appContext?.let { ctx ->
+            IpToolsBackgroundService.removeTask(ctx, IpToolsBackgroundService.KEY_FRP_CLIENT)
+        }
         addClientLog("🛑 FRP 客户端已停止")
     }
 }

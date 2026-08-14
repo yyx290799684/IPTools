@@ -17,17 +17,20 @@ object FrpConfigStorage {
 
     fun loadServerConfig(context: Context): FrpServerConfig {
         val prefs = getPrefs(context)
-        val jsonStr = prefs.getString(KEY_SERVER_CONFIG, null) ?: return FrpServerConfig()
+        val jsonStr = prefs.getString(KEY_SERVER_CONFIG, null) ?: return FrpServerConfig(bindPort = 7000, dashboardPort = 7500, dashboardUser = "admin", dashboardPwd = "admin")
         return try {
             val obj = JSONObject(jsonStr)
+            val bp = obj.optInt("bindPort", 7000)
+            val dp = obj.optInt("dashboardPort", 7500)
             FrpServerConfig(
-                bindPort = obj.optInt("bindPort", 0),
+                bindPort = if (bp <= 0) 7000 else bp,
                 authToken = obj.optString("authToken", ""),
-                dashboardPort = obj.optInt("dashboardPort", 0),
-                maxPoolCount = obj.optInt("maxPoolCount", 0)
+                dashboardPort = if (dp <= 0) 7500 else dp,
+                dashboardUser = obj.optString("dashboardUser", "admin").ifBlank { "admin" },
+                dashboardPwd = obj.optString("dashboardPwd", "admin").ifBlank { "admin" }
             )
         } catch (e: Exception) {
-            FrpServerConfig()
+            FrpServerConfig(bindPort = 7000, dashboardPort = 7500, dashboardUser = "admin", dashboardPwd = "admin")
         }
     }
 
@@ -37,7 +40,8 @@ object FrpConfigStorage {
                 put("bindPort", config.bindPort)
                 put("authToken", config.authToken)
                 put("dashboardPort", config.dashboardPort)
-                put("maxPoolCount", config.maxPoolCount)
+                put("dashboardUser", config.dashboardUser)
+                put("dashboardPwd", config.dashboardPwd)
             }
             getPrefs(context).edit().putString(KEY_SERVER_CONFIG, obj.toString()).apply()
         } catch (e: Exception) {

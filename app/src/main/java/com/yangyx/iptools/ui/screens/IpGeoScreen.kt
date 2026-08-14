@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
@@ -36,6 +38,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -77,6 +82,8 @@ fun IpGeoScreen(viewModel: MainViewModel) {
         "CUSTOM" to "自定义代理"
     )
 
+    var isDbCardExpanded by remember { mutableStateOf(false) }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -91,7 +98,7 @@ fun IpGeoScreen(viewModel: MainViewModel) {
             )
         }
 
-        // ip2region xdb Offline Database Updater Card
+        // ip2region xdb Offline Database Updater Card (Collapsible)
         item {
             OutlinedCard(
                 modifier = Modifier.fillMaxWidth(),
@@ -99,98 +106,124 @@ fun IpGeoScreen(viewModel: MainViewModel) {
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { isDbCardExpanded = !isDbCardExpanded },
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "ip2region 离线数据库 (.xdb)",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Surface(
-                            shape = MaterialTheme.shapes.extraSmall,
-                            color = MaterialTheme.colorScheme.primaryContainer
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
                             Text(
-                                text = "GitHub 实时源",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                text = "ip2region 离线数据库 (.xdb)",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Surface(
+                                shape = MaterialTheme.shapes.extraSmall,
+                                color = MaterialTheme.colorScheme.primaryContainer
+                            ) {
+                                Text(
+                                    text = "GitHub 实时源",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        IconButton(
+                            onClick = { isDbCardExpanded = !isDbCardExpanded },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isDbCardExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = if (isDbCardExpanded) "收起" else "展开"
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "数据库文件: ip2region_v4.xdb & ip2region_v6.xdb\n$xdbStatus",
+                        text = "状态: $xdbStatus",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        text = "选择更新下载源 / 加速代理节点:",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    if (isDbCardExpanded) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "数据库文件: ip2region_v4.xdb & ip2region_v6.xdb",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        xdbSources.forEach { pair ->
-                            FilterChip(
-                                selected = xdbSourceChoice == pair.first,
-                                onClick = { viewModel.xdbSourceChoice.value = pair.first },
-                                label = { Text(pair.second) }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = "选择更新下载源 / 加速代理节点:",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            xdbSources.forEach { pair ->
+                                FilterChip(
+                                    selected = xdbSourceChoice == pair.first,
+                                    onClick = { viewModel.xdbSourceChoice.value = pair.first },
+                                    label = { Text(pair.second) }
+                                )
+                            }
+                        }
+
+                        if (xdbSourceChoice == "CUSTOM") {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = xdbCustomProxy,
+                                onValueChange = { viewModel.xdbCustomProxy.value = it },
+                                label = { Text("自定义代理地址 (域名或完整前缀)") },
+                                placeholder = { Text("例如: https://ghproxy.net/ 或 gh.dpik.top") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
                             )
                         }
-                    }
 
-                    if (xdbSourceChoice == "CUSTOM") {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        OutlinedTextField(
-                            value = xdbCustomProxy,
-                            onValueChange = { viewModel.xdbCustomProxy.value = it },
-                            label = { Text("自定义代理地址 (域名或完整前缀)") },
-                            placeholder = { Text("例如: https://ghproxy.net/ 或 gh.dpik.top") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-
-                    if (xdbProgressMsg.isNotBlank()) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = xdbProgressMsg,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.secondary
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    OutlinedButton(
-                        onClick = { viewModel.updateXdbDatabaseOnline() },
-                        enabled = !isXdbUpdating,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        if (isXdbUpdating) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp
+                        if (xdbProgressMsg.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = xdbProgressMsg,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.secondary
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("正在从选中节点下载...")
-                        } else {
-                            Icon(imageVector = Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("在线更新/恢复 ip2region .xdb 数据库")
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        OutlinedButton(
+                            onClick = { viewModel.updateXdbDatabaseOnline() },
+                            enabled = !isXdbUpdating,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (isXdbUpdating) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("正在从选中节点下载...")
+                            } else {
+                                Icon(imageVector = Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("在线更新/恢复 ip2region .xdb 数据库")
+                            }
                         }
                     }
                 }

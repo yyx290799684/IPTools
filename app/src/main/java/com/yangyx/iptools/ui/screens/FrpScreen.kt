@@ -1,12 +1,15 @@
 package com.yangyx.iptools.ui.screens
 
 import android.widget.Toast
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -106,9 +109,10 @@ fun FrpScreen(viewModel: MainViewModel) {
     val rootState by viewModel.rootState.collectAsStateWithLifecycle()
 
     var showAddProxyDialog by remember { mutableStateOf(false) }
+    var isBinaryCardExpanded by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // FRP Binary Status & Updater Card
+        // FRP Binary Status & Updater Card (Collapsible)
         OutlinedCard(
             modifier = Modifier
                 .fillMaxWidth()
@@ -117,127 +121,154 @@ fun FrpScreen(viewModel: MainViewModel) {
         ) {
             Column(modifier = Modifier.padding(14.dp)) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { isBinaryCardExpanded = !isBinaryCardExpanded },
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "FRP 官方 Native 二进制 (frpc & frps)",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Surface(
-                        shape = MaterialTheme.shapes.extraSmall,
-                        color = MaterialTheme.colorScheme.primaryContainer
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.weight(1f)
                     ) {
                         Text(
-                            text = "GitHub 官方 Release",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            text = "FRP 官方 Native 二进制",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Surface(
+                            shape = MaterialTheme.shapes.extraSmall,
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Text(
+                                text = "GitHub Release",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = { isBinaryCardExpanded = !isBinaryCardExpanded },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isBinaryCardExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = if (isBinaryCardExpanded) "收起" else "展开"
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "二进制文件: native_bin/frpc & native_bin/frps\n状态: $frpStatus",
+                    text = "状态: $frpStatus",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        shape = MaterialTheme.shapes.extraSmall,
-                        color = if (rootState.isRooted) Color(0xFF1B5E20) else MaterialTheme.colorScheme.surfaceVariant
+                if (isBinaryCardExpanded) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "二进制文件: native_bin/frpc & native_bin/frps",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "⚡ Root 提权: ${rootState.label}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (rootState.isRooted) Color(0xFF81C784) else MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        Surface(
+                            shape = MaterialTheme.shapes.extraSmall,
+                            color = if (rootState.isRooted) Color(0xFF1B5E20) else MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Text(
+                                text = "⚡ Root 提权: ${rootState.label}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (rootState.isRooted) Color(0xFF81C784) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+
+                        OutlinedButton(
+                            onClick = { viewModel.refreshRootState() },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("检测 Root", fontSize = 12.sp, maxLines = 1, softWrap = false)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "选择更新下载源 / 加速代理节点:",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        DownloadProxyManager.PROXY_NODES.forEach { pair ->
+                            FilterChip(
+                                selected = frpSourceChoice == pair.first,
+                                onClick = { viewModel.frpSourceChoice.value = pair.first },
+                                label = { Text(pair.second) }
+                            )
+                        }
+                    }
+
+                    if (frpSourceChoice == "CUSTOM") {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = frpCustomProxy,
+                            onValueChange = { viewModel.frpCustomProxy.value = it },
+                            label = { Text("自定义代理地址 (域名或完整前缀)") },
+                            placeholder = { Text("例如: https://ghproxy.net/ 或 gh.dpik.top") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
+
+                    if (frpUpdateMsg.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = frpUpdateMsg,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
 
                     OutlinedButton(
-                        onClick = { viewModel.refreshRootState() },
-                        modifier = Modifier.height(28.dp)
-                    ) {
-                        Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(12.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("检测 Root", fontSize = 11.sp)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-                Text(
-                    text = "选择更新下载源 / 加速代理节点:",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    DownloadProxyManager.PROXY_NODES.forEach { pair ->
-                        FilterChip(
-                            selected = frpSourceChoice == pair.first,
-                            onClick = { viewModel.frpSourceChoice.value = pair.first },
-                            label = { Text(pair.second) }
-                        )
-                    }
-                }
-
-                if (frpSourceChoice == "CUSTOM") {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = frpCustomProxy,
-                        onValueChange = { viewModel.frpCustomProxy.value = it },
-                        label = { Text("自定义代理地址 (域名或完整前缀)") },
-                        placeholder = { Text("例如: https://ghproxy.net/ 或 gh.dpik.top") },
-                        singleLine = true,
+                        onClick = { viewModel.updateFrpBinaryOnline() },
+                        enabled = !isFrpUpdating,
                         modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
-                if (frpUpdateMsg.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = frpUpdateMsg,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.secondary
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                OutlinedButton(
-                    onClick = { viewModel.updateFrpBinaryOnline() },
-                    enabled = !isFrpUpdating,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    if (isFrpUpdating) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("正在从网络节点拉取最新 FRP...")
-                    } else {
-                        Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("下载 / 更新最新 FRP 二进制 (frpc & frps)")
+                    ) {
+                        if (isFrpUpdating) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("正在从网络节点拉取最新 FRP...")
+                        } else {
+                            Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("下载 / 更新最新 FRP 二进制 (frpc & frps)")
+                        }
                     }
                 }
             }
@@ -765,7 +796,7 @@ private fun FrpServerContent(
                                 onConfigChange(config.copy(bindPort = p))
                             },
                             label = { Text("绑定端口 (Bind Port)") },
-                            placeholder = { Text("例如 7000") },
+                            placeholder = { Text("7000") },
                             modifier = Modifier.weight(1f),
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -773,12 +804,16 @@ private fun FrpServerContent(
                         )
 
                         OutlinedTextField(
-                            value = config.authToken,
-                            onValueChange = { onConfigChange(config.copy(authToken = it)) },
-                            label = { Text("认证密钥 (Token)") },
-                            modifier = Modifier.weight(1.2f),
+                            value = if (config.dashboardPort == 0) "" else config.dashboardPort.toString(),
+                            onValueChange = {
+                                val p = it.toIntOrNull() ?: 0
+                                onConfigChange(config.copy(dashboardPort = p))
+                            },
+                            label = { Text("仪表盘端口 (Dashboard)") },
+                            placeholder = { Text("7500") },
+                            modifier = Modifier.weight(1f),
                             singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             enabled = !status.isRunning
                         )
                     }
@@ -787,33 +822,38 @@ private fun FrpServerContent(
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(
-                            value = if (config.dashboardPort == 0) "" else config.dashboardPort.toString(),
-                            onValueChange = {
-                                val p = it.toIntOrNull() ?: 0
-                                onConfigChange(config.copy(dashboardPort = p))
-                            },
-                            label = { Text("仪表盘端口") },
-                            placeholder = { Text("例如 7500") },
+                            value = config.dashboardUser,
+                            onValueChange = { onConfigChange(config.copy(dashboardUser = it)) },
+                            label = { Text("仪表盘账号") },
+                            placeholder = { Text("admin") },
                             modifier = Modifier.weight(1f),
                             singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             enabled = !status.isRunning
                         )
 
                         OutlinedTextField(
-                            value = if (config.maxPoolCount == 0) "" else config.maxPoolCount.toString(),
-                            onValueChange = {
-                                val m = it.toIntOrNull() ?: 0
-                                onConfigChange(config.copy(maxPoolCount = m))
-                            },
-                            label = { Text("最大池大小") },
-                            placeholder = { Text("例如 50") },
+                            value = config.dashboardPwd,
+                            onValueChange = { onConfigChange(config.copy(dashboardPwd = it)) },
+                            label = { Text("仪表盘密码") },
+                            placeholder = { Text("admin") },
                             modifier = Modifier.weight(1f),
                             singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             enabled = !status.isRunning
                         )
                     }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedTextField(
+                        value = config.authToken,
+                        onValueChange = { onConfigChange(config.copy(authToken = it)) },
+                        label = { Text("认证密钥 (Token，可选)") },
+                        placeholder = { Text("留空表示不启用 Token 鉴权") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        enabled = !status.isRunning
+                    )
 
                     Spacer(modifier = Modifier.height(14.dp))
 
@@ -851,7 +891,7 @@ private fun FrpServerContent(
                         ) {
                             Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null)
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("启动 FRP 服务端 (Listen Port :${config.bindPort})")
+                            Text("启动 FRP 服务端 (Listen Port :${if (config.bindPort > 0) config.bindPort else 7000})")
                         }
                     }
                 }

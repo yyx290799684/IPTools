@@ -18,6 +18,7 @@ import com.yangyx.iptools.data.local.HistoryRecord
 import com.yangyx.iptools.data.network.NetworkInfoScanner
 import com.yangyx.iptools.data.network.NetworkOverview
 import com.yangyx.iptools.data.network.NetworkSpeed
+import com.yangyx.iptools.data.tools.BatteryOptimizationHelper
 import com.yangyx.iptools.data.tools.DnsQueryResult
 import com.yangyx.iptools.data.tools.DnsRecordResult
 import com.yangyx.iptools.data.tools.DnsWhoisEngine
@@ -42,6 +43,7 @@ import com.yangyx.iptools.data.tools.RootUtils
 import com.yangyx.iptools.data.tools.TraceEngine
 import com.yangyx.iptools.data.tools.TraceHop
 import com.yangyx.iptools.data.tools.WhoisResult
+import com.yangyx.iptools.service.IpToolsBackgroundService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -88,6 +90,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         Ip2RegionSearcher.init(application)
+        IpToolsBackgroundService.onStopAllRequestedListener = {
+            stopPing()
+            stopTrace()
+            stopPortScan()
+            stopFscan()
+            stopIperf()
+            stopFrpClient()
+            stopFrpServer()
+        }
+    }
+
+    fun isBatteryOptimizationIgnored(): Boolean {
+        return BatteryOptimizationHelper.isIgnoringBatteryOptimizations(getApplication())
+    }
+
+    fun requestIgnoreBatteryOptimization() {
+        BatteryOptimizationHelper.requestIgnoreBatteryOptimizations(getApplication())
     }
 
     private val db = Room.databaseBuilder(
@@ -303,28 +322,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _pingSummary.value = null
         _isPingRunning.value = true
         _activeTaskName.value = "Ping: ${pingHost.value}"
+        IpToolsBackgroundService.startOrUpdateTask(
+            context = getApplication(),
+            taskKey = IpToolsBackgroundService.KEY_PING,
+            taskDescription = "Ping: ${pingHost.value}"
+        )
 
         val actualCount = if (isContinuousPing.value) -1 else pingCount.value
 
         pingJob = viewModelScope.launch {
-            PingEngine.executePing(
-                host = pingHost.value,
-                count = actualCount,
-                size = pingSize.value,
-                timeoutMs = pingTimeoutMs.value,
-                intervalMs = pingIntervalMs.value,
-                dontFragment = pingDontFragment.value,
-                ttl = pingTtl.value
-            ).collect { (pkt, summary) ->
-                if (pkt != null) {
-                    _pingPackets.value = _pingPackets.value + pkt
+            try {
+                PingEngine.executePing(
+                    host = pingHost.value,
+                    count = actualCount,
+                    size = pingSize.value,
+                    timeoutMs = pingTimeoutMs.value,
+                    intervalMs = pingIntervalMs.value,
+                    dontFragment = pingDontFragment.value,
+                    ttl = pingTtl.value
+                ).collect { (pkt, summary) ->
+                    if (pkt != null) {
+                        _pingPackets.value = _pingPackets.value + pkt
+                    }
+                    if (summary != null) {
+                        _pingSummary.value = summary
+                        _isPingRunning.value = false
+                        _activeTaskName.value = null
+                        recordHistory("Ping", pingHost.value, "Loss: ${summary.packetLossPercentage.toInt()}%, Avg: ${summary.avgRttMs}ms")
+                    }
                 }
-                if (summary != null) {
-                    _pingSummary.value = summary
-                    _isPingRunning.value = false
-                    _activeTaskName.value = null
-                    recordHistory("Ping", pingHost.value, "Loss: ${summary.packetLossPercentage.toInt()}%, Avg: ${summary.avgRttMs}ms")
-                }
+            } finally {
+                _isPingRunning.value = false
+                _activeTaskName.value = null
+                IpToolsBackgroundService.removeTask(getApplication(), IpToolsBackgroundService.KEY_PING)
             }
         }
     }
@@ -333,6 +363,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         pingJob?.cancel()
         _isPingRunning.value = false
         _activeTaskName.value = null
+        IpToolsBackgroundService.removeTask(getApplication(), IpToolsBackgroundService.KEY_PING)
     }
 
     // 3. Trace State
@@ -351,19 +382,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _traceHops.value = emptyList()
         _isTraceRunning.value = true
         _activeTaskName.value = "Trace: ${traceHost.value}"
+        IpToolsBackgroundService.startOrUpdateTask(
+            context = getApplication(),
+            taskKey = IpToolsBackgroundService.KEY_TRACE,
+            taskDescription = "路由追踪: ${traceHost.value}"
+        )
 
         traceJob = viewModelScope.launch {
-            TraceEngine.executeTraceroute(
-                targetHost = traceHost.value,
-                maxHops = traceMaxHops.value,
-                timeoutMs = traceTimeoutMs.value,
-                mode = traceMode.value
-            ).collect { hop ->
-                _traceHops.value = _traceHops.value + hop
+            try {
+                TraceEngine.executeTraceroute(
+                    targetHost = traceHost.value,
+                    maxHops = traceMaxHops.value,
+                    timeoutMs = traceTimeoutMs.value,
+                    mode = traceMode.value
+                ).collect { hop ->
+                    _traceHops.value = _traceHops.value + hop
+                }
+                recordHistory("Trace", traceHost.value, "Tracked ${_traceHops.value.size} hops")
+            } finally {
+                _isTraceRunning.value = false
+                _activeTaskName.value = null
+                IpToolsBackgroundService.removeTask(getApplication(), IpToolsBackgroundService.KEY_TRACE)
             }
-            _isTraceRunning.value = false
-            _activeTaskName.value = null
-            recordHistory("Trace", traceHost.value, "Tracked ${_traceHops.value.size} hops")
         }
     }
 
@@ -371,6 +411,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         traceJob?.cancel()
         _isTraceRunning.value = false
         _activeTaskName.value = null
+        IpToolsBackgroundService.removeTask(getApplication(), IpToolsBackgroundService.KEY_TRACE)
     }
 
     // 4. Port Scan State
@@ -394,19 +435,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val concurrency = portScanConcurrencyText.value.toIntOrNull()?.coerceIn(10, 500) ?: 100
         val timeoutMs = portScanTimeoutText.value.toIntOrNull()?.coerceIn(50, 5000) ?: 400
 
+        IpToolsBackgroundService.startOrUpdateTask(
+            context = getApplication(),
+            taskKey = IpToolsBackgroundService.KEY_PORT_SCAN,
+            taskDescription = "端口扫描: ${portScanTarget.value} (${ports.size}个端口)"
+        )
+
         portScanJob = viewModelScope.launch {
-            PortScanEngine.scanPorts(
-                host = portScanTarget.value,
-                portsToScan = ports,
-                timeoutMs = timeoutMs,
-                concurrency = concurrency
-            ).collect { progress ->
-                _portScanProgress.value = progress
+            try {
+                PortScanEngine.scanPorts(
+                    host = portScanTarget.value,
+                    portsToScan = ports,
+                    timeoutMs = timeoutMs,
+                    concurrency = concurrency
+                ).collect { progress ->
+                    _portScanProgress.value = progress
+                    IpToolsBackgroundService.startOrUpdateTask(
+                        context = getApplication(),
+                        taskKey = IpToolsBackgroundService.KEY_PORT_SCAN,
+                        taskDescription = "端口扫描: ${portScanTarget.value} (${progress.scannedCount}/${progress.totalPorts}) 开放:${progress.openPorts.size}"
+                    )
+                }
+                val openCount = _portScanProgress.value?.openPorts?.size ?: 0
+                recordHistory("PortScan", portScanTarget.value, "Found $openCount open ports out of ${ports.size}")
+            } finally {
+                _isPortScanRunning.value = false
+                _activeTaskName.value = null
+                IpToolsBackgroundService.removeTask(getApplication(), IpToolsBackgroundService.KEY_PORT_SCAN)
             }
-            _isPortScanRunning.value = false
-            _activeTaskName.value = null
-            val openCount = _portScanProgress.value?.openPorts?.size ?: 0
-            recordHistory("PortScan", portScanTarget.value, "Found $openCount open ports out of ${ports.size}")
         }
     }
 
@@ -414,6 +470,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         portScanJob?.cancel()
         _isPortScanRunning.value = false
         _activeTaskName.value = null
+        IpToolsBackgroundService.removeTask(getApplication(), IpToolsBackgroundService.KEY_PORT_SCAN)
     }
 
     // 5. Fscan State
@@ -440,6 +497,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val threads = fscanThreadCountText.value.toIntOrNull()?.coerceIn(1, 10000) ?: 1000
         val timeoutSec = fscanTimeoutSecText.value.toIntOrNull()?.coerceIn(1, 60) ?: 1
 
+        IpToolsBackgroundService.startOrUpdateTask(
+            context = getApplication(),
+            taskKey = IpToolsBackgroundService.KEY_FSCAN,
+            taskDescription = "Fscan 扫描: ${fscanTargetText.value}"
+        )
+
         fscanJob = viewModelScope.launch {
             try {
                 FscanEngine.executeFscan(
@@ -453,15 +516,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     timeoutSec = timeoutSec
                 ).collect { progress ->
                     _fscanProgress.value = progress
+                    IpToolsBackgroundService.startOrUpdateTask(
+                        context = getApplication(),
+                        taskKey = IpToolsBackgroundService.KEY_FSCAN,
+                        taskDescription = "Fscan: ${progress.currentScanningIp} (${progress.scannedIpsCount}/${progress.totalIps}) 存活:${progress.aliveHosts.size}"
+                    )
                 }
+                val aliveCount = _fscanProgress.value?.aliveHosts?.size ?: 0
+                recordHistory("Fscan", fscanTargetText.value, "Found $aliveCount active hosts")
             } catch (t: Throwable) {
                 t.printStackTrace()
             } finally {
                 _isFscanRunning.value = false
                 _activeTaskName.value = null
+                IpToolsBackgroundService.removeTask(getApplication(), IpToolsBackgroundService.KEY_FSCAN)
             }
-            val aliveCount = _fscanProgress.value?.aliveHosts?.size ?: 0
-            recordHistory("Fscan", fscanTargetText.value, "Found $aliveCount active hosts")
         }
     }
 
@@ -469,6 +538,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         fscanJob?.cancel()
         _isFscanRunning.value = false
         _activeTaskName.value = null
+        IpToolsBackgroundService.removeTask(getApplication(), IpToolsBackgroundService.KEY_FSCAN)
     }
 
     // 6. iPerf State
@@ -493,29 +563,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isIperfRunning.value = true
         _activeTaskName.value = if (iperfMode.value == "SERVER") "iPerf Server Mode" else "iPerf Client: ${iperfServer.value}"
 
+        IpToolsBackgroundService.startOrUpdateTask(
+            context = getApplication(),
+            taskKey = IpToolsBackgroundService.KEY_IPERF,
+            taskDescription = if (iperfMode.value == "SERVER") "iPerf 服务端监听 :${iperfPort.value}" else "iPerf 测速: ${iperfServer.value}"
+        )
+
         iperfJob = viewModelScope.launch {
-            if (iperfMode.value == "SERVER") {
-                IperfEngine.runServerMode(listenPort = iperfPort.value).collect { point ->
-                    _iperfPoints.value = _iperfPoints.value + point
+            try {
+                if (iperfMode.value == "SERVER") {
+                    IperfEngine.runServerMode(listenPort = iperfPort.value).collect { point ->
+                        _iperfPoints.value = _iperfPoints.value + point
+                    }
+                } else {
+                    IperfEngine.runClientTest(
+                        context = getApplication(),
+                        serverHost = iperfServer.value,
+                        port = iperfPort.value,
+                        durationSec = iperfDuration.value,
+                        protocol = iperfProtocol.value,
+                        bandwidthLimit = iperfBandwidth.value,
+                        parallelStreams = iperfParallel.value,
+                        isReverse = iperfIsReverse.value
+                    ).collect { point ->
+                        _iperfPoints.value = _iperfPoints.value + point
+                    }
                 }
-            } else {
-                IperfEngine.runClientTest(
-                    context = getApplication(),
-                    serverHost = iperfServer.value,
-                    port = iperfPort.value,
-                    durationSec = iperfDuration.value,
-                    protocol = iperfProtocol.value,
-                    bandwidthLimit = iperfBandwidth.value,
-                    parallelStreams = iperfParallel.value,
-                    isReverse = iperfIsReverse.value
-                ).collect { point ->
-                    _iperfPoints.value = _iperfPoints.value + point
-                }
+                val last = _iperfPoints.value.lastOrNull()
+                recordHistory("iPerf", if (iperfMode.value == "SERVER") "Server Mode (${iperfPort.value})" else iperfServer.value, "Avg: ${last?.bitrateMbps ?: 0f} Mbps")
+            } finally {
+                _isIperfRunning.value = false
+                _activeTaskName.value = null
+                IpToolsBackgroundService.removeTask(getApplication(), IpToolsBackgroundService.KEY_IPERF)
             }
-            _isIperfRunning.value = false
-            _activeTaskName.value = null
-            val last = _iperfPoints.value.lastOrNull()
-            recordHistory("iPerf", if (iperfMode.value == "SERVER") "Server Mode (${iperfPort.value})" else iperfServer.value, "Avg: ${last?.bitrateMbps ?: 0f} Mbps")
         }
     }
 
@@ -524,6 +604,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iperfJob?.cancel()
         _isIperfRunning.value = false
         _activeTaskName.value = null
+        IpToolsBackgroundService.removeTask(getApplication(), IpToolsBackgroundService.KEY_IPERF)
     }
 
     // Geo Provider Selection (IP2REGION vs ZXINC_API)
