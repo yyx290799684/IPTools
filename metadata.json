@@ -1,0 +1,6 @@
+{
+  "name": "IPTools",
+  "description": "Comprehensive network utility toolkit with IP Geolocation, Subnet Scanner, Ping, Traceroute, Port Scanner, Fscan, iPerf, DNS Lookup, Whois, Favorites, and Network Traffic speed testing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
