@@ -48,6 +48,29 @@ data class FscanProgress(
 
 object FscanEngine {
 
+    private val IPV6_BRACKET_REGEX = Regex("\\[([0-9a-fA-F:]+)\\](?::([0-9]{1,5}))?(?:\\s+([a-zA-Z0-9_-]+))?")
+    private val IPV4_REGEX = Regex("(?:https?://|ftp://|ssh://|mysql://|smb://|redis://)?([0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3})(?::([0-9]{1,5}))?(?:\\s+([a-zA-Z0-9_-]+))?")
+    private val RAW_IPV6_REGEX = Regex("(?:https?://)?([0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{0,4}){2,7})(?::([0-9]{1,5}))?")
+
+    private const val MAX_LOG_BUFFER_SIZE = 1200
+
+    private fun appendLog(logs: MutableList<String>, msg: String) {
+        synchronized(logs) {
+            if (logs.size >= MAX_LOG_BUFFER_SIZE) {
+                // Drop oldest 200 lines to avoid frequent resizing
+                val removeCount = (logs.size - MAX_LOG_BUFFER_SIZE + 200).coerceAtMost(logs.size)
+                if (removeCount > 0) {
+                    logs.subList(0, removeCount).clear()
+                }
+            }
+            logs.add(msg)
+        }
+    }
+
+    private fun getLogsSnapshot(logs: MutableList<String>): List<String> {
+        return synchronized(logs) { ArrayList(logs) }
+    }
+
     fun parsePortRange(portsInput: String): List<Int> {
         val ports = mutableSetOf<Int>()
         val tokens = portsInput.split(",", ";", " ", "\n").map { it.trim() }.filter { it.isNotBlank() }
@@ -139,7 +162,7 @@ object FscanEngine {
     /**
      * Test and verify fscan executable binary directly on demand
      */
-    suspend fun verifyBinary(context: Context): String = withContext(Dispatchers.IO) {
+    suspend fun verifyBinary(context: Context, execMode: ProcessExecMode = ProcessExecMode.AUTO): String = withContext(Dispatchers.IO) {
         val binDir = File(context.filesDir, "native_bin")
         val targetFile = File(binDir, "fscan")
         val fallbackFile = File(context.applicationInfo.nativeLibraryDir, "libfscan.so")
@@ -150,19 +173,16 @@ object FscanEngine {
         }
 
         ensureExecutablePermissions(runFile)
-        val isRooted = try { RootUtils.isRootAvailable() } catch (_: Exception) { false }
-        val suBinary = try { RootUtils.findSuBinaryPath() } catch (_: Exception) { "su" }
 
         try {
-            val pb = if (isRooted) {
-                RootUtils.executeSuCmd("chmod 777 ${runFile.absolutePath}")
-                ProcessBuilder(suBinary, "-c", "cd ${binDir.absolutePath} && ${runFile.absolutePath} -h")
-            } else {
-                ProcessBuilder(runFile.absolutePath, "-h")
-            }
-            pb.directory(binDir)
-            pb.redirectErrorStream(true)
-            val proc = pb.start()
+            val spawnResult = NativeProcessLauncher.startProcess(
+                context = context,
+                binaryFile = runFile,
+                args = listOf("-h"),
+                execMode = execMode,
+                workDir = binDir
+            )
+            val proc = spawnResult.process
             val reader = java.io.BufferedReader(java.io.InputStreamReader(proc.inputStream))
             val outputLines = mutableListOf<String>()
             var line: String?
@@ -175,16 +195,14 @@ object FscanEngine {
             proc.waitFor()
             val exitCode = proc.exitValue()
 
-            // fscan -h exits with code 2 or 0 when it outputs help/flags, confirming it works on CPU architecture
             val hasFscanHelp = outputLines.any { it.contains("fscan", ignoreCase = true) || it.contains("Usage of", ignoreCase = true) || it.contains("flag needs an argument", ignoreCase = true) }
             if (exitCode == 2 || exitCode == 0 || hasFscanHelp) {
-                val mode = if (isRooted) "Root 提权" else "普通模式"
-                return@withContext "✅ 验证通过 (运行正常, $mode, 架构兼容)"
+                return@withContext "✅ 验证通过 [${spawnResult.modeUsed}]: 运行正常, 架构兼容"
             } else {
-                return@withContext "⚠️ 运行异常 (exitCode=$exitCode: ${outputLines.take(1).joinToString()})"
+                return@withContext "⚠️ 运行提示 [${spawnResult.modeUsed}] (exitCode=$exitCode: ${outputLines.take(1).joinToString()})"
             }
         } catch (e: Exception) {
-            return@withContext "❌ 验证失败 (${e.message ?: e.javaClass.simpleName})"
+            return@withContext "❌ 验证失败 (${e.message ?: e.javaClass.simpleName})\n提示: 若设备已 Root，请授予 Root 权限；未 Root 设备部分系统支持直接运行。"
         }
     }
 
@@ -574,7 +592,8 @@ object FscanEngine {
         portScanThreads: Int = 1000,
         timeoutSec: Int = 1,
         timeoutMs: Int = 500,
-        concurrency: Int = 50
+        concurrency: Int = 50,
+        execMode: ProcessExecMode = ProcessExecMode.AUTO
     ): Flow<FscanProgress> = flow {
         val ipList = parseIpRangeOrCidr(targetInput)
         if (ipList.isEmpty()) return@flow
@@ -601,24 +620,23 @@ object FscanEngine {
             )
         )
 
-        // Try binary process execution if context is available
         if (context != null) {
             val addAndEmitLog: suspend (String) -> Unit = { msg ->
-                synchronized(logs) { logs.add(msg) }
+                appendLog(logs, msg)
                 emit(
                     FscanProgress(
                         scannedIpsCount = 0,
                         totalIps = totalIps,
                         aliveHosts = emptyList(),
                         currentScanningIp = ipList.firstOrNull() ?: "",
-                        logs = synchronized(logs) { logs.toList() }
+                        logs = getLogsSnapshot(logs)
                     )
                 )
             }
 
             addAndEmitLog("🔍 [诊断日志] 正在检测本地 fscan 原生二进制文件...")
             val binaryFile = getFscanExecutable(context) { logMsg ->
-                synchronized(logs) { logs.add(logMsg) }
+                appendLog(logs, logMsg)
             }
             emit(
                 FscanProgress(
@@ -626,7 +644,7 @@ object FscanEngine {
                     totalIps = totalIps,
                     aliveHosts = emptyList(),
                     currentScanningIp = ipList.firstOrNull() ?: "",
-                    logs = synchronized(logs) { logs.toList() }
+                    logs = getLogsSnapshot(logs)
                 )
             )
 
@@ -647,24 +665,19 @@ object FscanEngine {
                     timeoutSec = timeoutSec,
                     timeoutMs = timeoutMs,
                     concurrency = concurrency,
+                    execMode = execMode,
                     logs = logs,
                     emitProgress = { progress -> emit(progress) }
                 )
                 if (success) return@flow
-                else {
-                    addAndEmitLog("⚠️ [诊断日志] 原生 fscan 进程未成功完成或异常退出，切换降级引擎...")
-                }
             } else {
-                addAndEmitLog("ℹ️ [诊断日志] 本地未找到符合条件的原生 fscan 可执行文件 (>300KB)。")
-                addAndEmitLog("ℹ️ [降级引擎] 切换为内置的高并发 Kotlin 纯 Socket 扫描引擎...")
-            }
-        } else {
-            synchronized(logs) {
-                logs.add("ℹ️ [降级引擎] 上下文为空，切换为内置高并发 Kotlin 扫描引擎...")
+                addAndEmitLog("❌ [诊断日志] 本地未找到 fscan 原生二进制文件。")
+                addAndEmitLog("💡 请在上方【fscan 原生二进制管理】中点击【下载/更新】下载官方二进制。")
+                return@flow
             }
         }
 
-        logs.add("[+] Phase 1: Start host alive discovery...")
+        appendLog(logs, "[+] Phase 1: Start host alive discovery...")
 
         // ==========================================
         // PHASE 1: Host Discovery (存活探测 - LiveTop)
@@ -676,16 +689,14 @@ object FscanEngine {
             for (ip in ipList) {
                 aliveIpsMap[ip] = 0L
             }
-            synchronized(logs) {
-                logs.add("[*] Ping disabled, treating all $totalIps host(s) as target candidates.")
-            }
+            appendLog(logs, "[*] Ping disabled, treating all $totalIps host(s) as target candidates.")
             emit(
                 FscanProgress(
                     scannedIpsCount = totalIps,
                     totalIps = totalIps,
                     aliveHosts = emptyList(),
                     currentScanningIp = ipList.first(),
-                    logs = synchronized(logs) { logs.toList() }
+                    logs = getLogsSnapshot(logs)
                 )
             )
         } else {
@@ -722,9 +733,7 @@ object FscanEngine {
                     val results = jobs.awaitAll().filterNotNull()
                     for ((ip, latency) in results) {
                         aliveIpsMap[ip] = latency
-                        synchronized(logs) {
-                            logs.add("[*] LiveTop: $ip is alive")
-                        }
+                        appendLog(logs, "[*] LiveTop: $ip is alive")
                     }
 
                     hostScannedCount += chunk.size
@@ -734,7 +743,7 @@ object FscanEngine {
                             totalIps = totalIps,
                             aliveHosts = emptyList(),
                             currentScanningIp = chunk.lastOrNull() ?: "",
-                            logs = synchronized(logs) { logs.toList() }
+                            logs = getLogsSnapshot(logs)
                         )
                     )
                 }
@@ -742,11 +751,9 @@ object FscanEngine {
         }
 
         val aliveIpsList = aliveIpsMap.keys.toList()
-        synchronized(logs) {
-            logs.add("[+] Phase 1 Complete. Found ${aliveIpsList.size} alive host(s) out of $totalIps target(s).")
-            if (aliveIpsList.isNotEmpty()) {
-                logs.add("[+] Phase 2: Start port scanning on alive hosts...")
-            }
+        appendLog(logs, "[+] Phase 1 Complete. Found ${aliveIpsList.size} alive host(s) out of $totalIps target(s).")
+        if (aliveIpsList.isNotEmpty()) {
+            appendLog(logs, "[+] Phase 2: Start port scanning on alive hosts...")
         }
 
         emit(
@@ -755,21 +762,19 @@ object FscanEngine {
                 totalIps = totalIps,
                 aliveHosts = emptyList(),
                 currentScanningIp = aliveIpsList.firstOrNull() ?: "",
-                logs = synchronized(logs) { logs.toList() }
+                logs = getLogsSnapshot(logs)
             )
         )
 
         if (aliveIpsList.isEmpty()) {
-            synchronized(logs) {
-                logs.add("[+] Scan completed. No alive hosts found.")
-            }
+            appendLog(logs, "[+] Scan completed. No alive hosts found.")
             emit(
                 FscanProgress(
                     scannedIpsCount = totalIps,
                     totalIps = totalIps,
                     aliveHosts = emptyList(),
                     currentScanningIp = "",
-                    logs = synchronized(logs) { logs.toList() }
+                    logs = getLogsSnapshot(logs)
                 )
             )
             return@flow
@@ -832,9 +837,7 @@ object FscanEngine {
                                     else -> "Custom"
                                 }
 
-                                synchronized(logs) {
-                                    logs.add("[+] Port scan: $ip:$port open ($serviceName)")
-                                }
+                                appendLog(logs, "[+] Port scan: $ip:$port open ($serviceName)")
 
                                 // Phase 3: Protocol / Web Title Fingerprinting
                                 if (enableWebScan && isWeb) {
@@ -860,9 +863,7 @@ object FscanEngine {
                                     } catch (_: Exception) {}
 
                                     if (bannerOrTitle.isNotBlank()) {
-                                        synchronized(logs) {
-                                            logs.add("[+] Web Title: http://$ip:$port [$bannerOrTitle]")
-                                        }
+                                        appendLog(logs, "[+] Web Title: http://$ip:$port [$bannerOrTitle]")
                                     }
                                 }
 
@@ -903,7 +904,7 @@ object FscanEngine {
                             totalIps = totalIps,
                             aliveHosts = hostResults.toList(),
                             currentScanningIp = "$ip [端口 $scannedPortCount/$totalPortsToProbe ($portPct%)]",
-                            logs = synchronized(logs) { logs.toList() }
+                            logs = getLogsSnapshot(logs)
                         )
                     )
                 }
@@ -940,15 +941,13 @@ object FscanEngine {
                     totalIps = totalIps,
                     aliveHosts = hostResults.toList(),
                     currentScanningIp = ip,
-                    logs = synchronized(logs) { logs.toList() }
+                    logs = getLogsSnapshot(logs)
                 )
             )
         }
 
         val totalOpenPorts = hostResults.sumOf { it.openPorts.size }
-        synchronized(logs) {
-            logs.add("[+] Scan completed. Total: ${hostResults.size} alive host(s), $totalOpenPorts open port(s)")
-        }
+        appendLog(logs, "[+] Scan completed. Total: ${hostResults.size} alive host(s), $totalOpenPorts open port(s)")
 
         emit(
             FscanProgress(
@@ -956,7 +955,7 @@ object FscanEngine {
                 totalIps = totalIps,
                 aliveHosts = hostResults.toList(),
                 currentScanningIp = aliveIpsList.lastOrNull() ?: "",
-                logs = synchronized(logs) { logs.toList() }
+                logs = getLogsSnapshot(logs)
             )
         )
     }.flowOn(Dispatchers.IO)
@@ -973,6 +972,7 @@ object FscanEngine {
         timeoutSec: Int,
         timeoutMs: Int,
         concurrency: Int,
+        execMode: ProcessExecMode = ProcessExecMode.AUTO,
         logs: MutableList<String>,
         emitProgress: suspend (FscanProgress) -> Unit
     ): Boolean {
@@ -984,7 +984,7 @@ object FscanEngine {
         var currentScanningTarget = cleanTarget
 
         suspend fun addLogAndEmit(msg: String) {
-            synchronized(logs) { logs.add(msg) }
+            appendLog(logs, msg)
             try {
                 emitProgress(
                     FscanProgress(
@@ -992,7 +992,7 @@ object FscanEngine {
                         totalIps = aliveMap.size.coerceAtLeast(1),
                         aliveHosts = aliveMap.values.toList(),
                         currentScanningIp = currentScanningTarget,
-                        logs = synchronized(logs) { logs.toList() }
+                        logs = getLogsSnapshot(logs)
                     )
                 )
             } catch (e: Exception) {
@@ -1015,19 +1015,6 @@ object FscanEngine {
             val runTarget = if (execFile.exists() && execFile.length() > 300_000) execFile else binaryFile
             ensureExecutablePermissions(runTarget)
 
-            val isRooted = try { RootUtils.isRootAvailable() } catch (_: Exception) { false }
-            val rootStatus = try { RootUtils.getRootStatusDescription() } catch (_: Exception) { "检测失败" }
-            val suBinary = try { RootUtils.findSuBinaryPath() } catch (_: Exception) { "su" }
-
-            addLogAndEmit("⚡ Root 状态检测: $rootStatus (提权程序: $suBinary, Root可用=$isRooted)")
-
-            if (isRooted) {
-                val chmodOk = RootUtils.executeSuCmd("chmod 777 ${runTarget.absolutePath}")
-                addLogAndEmit("🔑 执行 Root chmod 777: $chmodOk (${runTarget.absolutePath})")
-            } else {
-                ensureExecutablePermissions(runTarget)
-            }
-
             // ========================================================
             // 构造正式 fscan 参数与命令行
             // ========================================================
@@ -1044,37 +1031,17 @@ object FscanEngine {
             if (disablePing) argsList.add("-np")
             if (!enableWebScan) argsList.add("-nw")
 
-            val argsStr = argsList.joinToString(" ")
-            // 切换工作目录到应用可写的 execDir 目录，避免在系统根目录 / 下创建临时文件
-            val fullCmdStr = "cd ${execDir.absolutePath} && ${runTarget.absolutePath} $argsStr"
+            val spawnResult = NativeProcessLauncher.startProcess(
+                context = context,
+                binaryFile = runTarget,
+                args = argsList,
+                execMode = execMode,
+                workDir = execDir
+            )
 
-            val pb: ProcessBuilder
-            if (isRooted) {
-                addLogAndEmit("🚀 [启动扫描 (Root)] $suBinary -c \"$fullCmdStr\"")
-                pb = ProcessBuilder(suBinary, "-c", fullCmdStr)
-            } else {
-                val cmd = mutableListOf<String>(runTarget.absolutePath).apply { addAll(argsList) }
-                addLogAndEmit("🚀 [启动扫描 (普通)] ${cmd.joinToString(" ")}")
-                pb = ProcessBuilder(cmd)
-            }
-            pb.directory(execDir)
+            addLogAndEmit("🚀 [启动扫描 | 运行方式: ${spawnResult.modeUsed}] ${spawnResult.commandLine}")
 
-            pb.redirectErrorStream(true)
-            val proc = try {
-                pb.start()
-            } catch (startEx: Exception) {
-                addLogAndEmit("⚠️ [进程启动错误] ${startEx.message}")
-                if (isRooted) {
-                    addLogAndEmit("💡 尝试普通模式 (非 Root) 回退启动...")
-                    val fallbackCmd = mutableListOf<String>(runTarget.absolutePath).apply { addAll(argsList) }
-                    ProcessBuilder(fallbackCmd).apply {
-                        directory(execDir)
-                        redirectErrorStream(true)
-                    }.start()
-                } else {
-                    throw startEx
-                }
-            }
+            val proc = spawnResult.process
 
             val reader = java.io.BufferedReader(java.io.InputStreamReader(proc.inputStream))
             var line: String?
@@ -1086,9 +1053,7 @@ object FscanEngine {
                 if (l.isBlank()) continue
                 readLineCount++
 
-                synchronized(logs) {
-                    logs.add(l)
-                }
+                appendLog(logs, l)
 
                 parseFscanOutputLine(l, aliveMap)
 
@@ -1098,7 +1063,7 @@ object FscanEngine {
                 }
 
                 val now = System.currentTimeMillis()
-                if (now - lastEmitTime > 50L) {
+                if (now - lastEmitTime > 150L) {
                     lastEmitTime = now
                     emitProgress(
                         FscanProgress(
@@ -1106,7 +1071,7 @@ object FscanEngine {
                             totalIps = aliveMap.size.coerceAtLeast(1),
                             aliveHosts = aliveMap.values.toList(),
                             currentScanningIp = currentScanningTarget,
-                            logs = synchronized(logs) { logs.toList() }
+                            logs = getLogsSnapshot(logs)
                         )
                     )
                 }
@@ -1114,11 +1079,25 @@ object FscanEngine {
 
             proc.waitFor()
             val exitCode = proc.exitValue()
-            addLogAndEmit("[+] fscan 进程运行结束, exitCode = $exitCode, 共读取到 $readLineCount 行输出")
+            appendLog(logs, "[+] fscan 进程运行结束, exitCode = $exitCode, 共读取到 $readLineCount 行输出")
+
+            val isLinkerOrPermissionFail = logs.takeLast(10).any { l ->
+                l.contains("unexpected e_type", ignoreCase = true) ||
+                l.contains("Could not find a PHDR", ignoreCase = true) ||
+                l.contains("broken executable", ignoreCase = true) ||
+                l.contains("Permission denied", ignoreCase = true) ||
+                l.contains("not executable", ignoreCase = true)
+            } || (exitCode != 0 && aliveMap.isEmpty() && readLineCount <= 3)
+
+            if (isLinkerOrPermissionFail) {
+                addLogAndEmit("⚠️ [系统限制] 原生二进制受 Android W^X / ELF Linker (e_type:2) 限制无法以非 Root 运行。")
+                addLogAndEmit("🚀 [自动切换] 正在启动【内置 Kotlin 高并发扫描引擎】为您完成主机探测与端口扫描...")
+                return false
+            }
 
             if (aliveMap.isEmpty() && !disablePing) {
-                addLogAndEmit("ℹ️ [诊断分析] fscan 执行完毕但未发现存活主机 (Ping 探测失败或目标拒绝 ICMP 包)。")
-                addLogAndEmit("💡 [操作建议] 请在 Fscan 界面选项中勾选【禁用 Ping 探测 (-np)】后再次尝试扫描！")
+                appendLog(logs, "ℹ️ [诊断分析] fscan 执行完毕但未发现存活主机 (Ping 探测失败或目标拒绝 ICMP 包)。")
+                appendLog(logs, "💡 [操作建议] 请在 Fscan 界面选项中勾选【禁用 Ping 探测 (-np)】后再次尝试扫描！")
             }
 
             emitProgress(
@@ -1127,7 +1106,7 @@ object FscanEngine {
                     totalIps = aliveMap.size.coerceAtLeast(1),
                     aliveHosts = aliveMap.values.toList(),
                     currentScanningIp = "扫描完成",
-                    logs = synchronized(logs) { logs.toList() }
+                    logs = getLogsSnapshot(logs)
                 )
             )
             return true
@@ -1143,8 +1122,7 @@ object FscanEngine {
         val l = line.trim()
 
         // 1. IPv6 bracket notation: e.g. [2408:8000:b001:8101:90:213:0:1]:3082 or [2408:...]:53 domain
-        val ipv6BracketRegex = Regex("\\[([0-9a-fA-F:]+)\\](?::([0-9]{1,5}))?(?:\\s+([a-zA-Z0-9_-]+))?")
-        val bracketMatch = ipv6BracketRegex.find(l)
+        val bracketMatch = IPV6_BRACKET_REGEX.find(l)
         if (bracketMatch != null) {
             val ipCandidate = bracketMatch.groupValues[1]
             if (isValidIpv6(ipCandidate)) {
@@ -1155,8 +1133,7 @@ object FscanEngine {
         }
 
         // 2. IPv4 notation: e.g. 192.168.1.1:8080 or http://192.168.1.1:8080 or 192.168.1.1
-        val ipv4Regex = Regex("(?:https?://|ftp://|ssh://|mysql://|smb://|redis://)?([0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3})(?::([0-9]{1,5}))?(?:\\s+([a-zA-Z0-9_-]+))?")
-        val v4Match = ipv4Regex.find(l)
+        val v4Match = IPV4_REGEX.find(l)
         if (v4Match != null) {
             val ipCandidate = v4Match.groupValues[1]
             val octets = ipCandidate.split(".").mapNotNull { it.toIntOrNull() }
@@ -1168,8 +1145,7 @@ object FscanEngine {
         }
 
         // 3. Raw IPv6 notation without brackets: e.g. 2408:8000:b001:8101:90:213:0:1:10010 or 2408:8000:b001:8101:90:213:0:1
-        val rawIpv6Regex = Regex("(?:https?://)?([0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{0,4}){2,7})(?::([0-9]{1,5}))?")
-        val rawV6Match = rawIpv6Regex.find(l)
+        val rawV6Match = RAW_IPV6_REGEX.find(l)
         if (rawV6Match != null) {
             val ipCandidate = rawV6Match.groupValues[1]
             if (isValidIpv6(ipCandidate)) {

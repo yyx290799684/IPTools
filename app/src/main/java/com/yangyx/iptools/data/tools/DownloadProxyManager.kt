@@ -18,13 +18,14 @@ data class GitHubAssetInfo(
 object DownloadProxyManager {
 
     val PROXY_NODES = listOf(
-        "RAW" to "GitHub 原始",
+        "dh.dpik.top" to "dh.dpik.top",
         "gh.dpik.top" to "gh.dpik.top",
         "gh-proxy.com" to "gh-proxy.com",
         "github.tbap.top" to "github.tbap.top",
         "github.dpik.top" to "github.dpik.top",
         "ghfile.geekertao.top" to "ghfile.geekertao.top",
         "ghproxy.net" to "ghproxy.net",
+        "RAW" to "GitHub 原始",
         "CUSTOM" to "自定义代理"
     )
 

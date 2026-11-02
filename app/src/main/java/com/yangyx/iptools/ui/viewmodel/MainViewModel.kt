@@ -38,6 +38,7 @@ import com.yangyx.iptools.data.tools.PingPacketResult
 import com.yangyx.iptools.data.tools.PingSummary
 import com.yangyx.iptools.data.tools.PortScanEngine
 import com.yangyx.iptools.data.tools.PortScanProgress
+import com.yangyx.iptools.data.tools.ProcessExecMode
 import com.yangyx.iptools.data.tools.RootState
 import com.yangyx.iptools.data.tools.RootUtils
 import com.yangyx.iptools.data.tools.TraceEngine
@@ -481,6 +482,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val fscanDisableBrute = MutableStateFlow(true)
     val fscanDisablePing = MutableStateFlow(false)
     val fscanEnableWebScan = MutableStateFlow(true)
+    val fscanExecMode = MutableStateFlow(ProcessExecMode.AUTO)
 
     private val _fscanProgress = MutableStateFlow<FscanProgress?>(null)
     val fscanProgress: StateFlow<FscanProgress?> = _fscanProgress.asStateFlow()
@@ -513,7 +515,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     disablePing = fscanDisablePing.value,
                     enableWebScan = fscanEnableWebScan.value,
                     portScanThreads = threads,
-                    timeoutSec = timeoutSec
+                    timeoutSec = timeoutSec,
+                    execMode = fscanExecMode.value
                 ).collect { progress ->
                     _fscanProgress.value = progress
                     IpToolsBackgroundService.startOrUpdateTask(
@@ -550,12 +553,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val iperfBandwidth = MutableStateFlow("0")
     val iperfParallel = MutableStateFlow(1)
     val iperfIsReverse = MutableStateFlow(false)
+    val iperfExecMode = MutableStateFlow(ProcessExecMode.AUTO)
+
+    val iperfBinaryStatusText = MutableStateFlow(IperfEngine.getBinaryStatusInfo(getApplication()))
+    val isIperfDownloading = MutableStateFlow(false)
+    val iperfDownloadProgress = MutableStateFlow("")
+    val iperfSourceChoice = MutableStateFlow("dh.dpik.top")
+    val iperfCustomProxy = MutableStateFlow("")
+    val iperfVerifyStatusText = MutableStateFlow("")
+    val isIperfVerifying = MutableStateFlow(false)
+    val iperfLocalIps = MutableStateFlow(IperfEngine.getLocalIpAddresses())
 
     private val _iperfPoints = MutableStateFlow<List<IperfPoint>>(emptyList())
     val iperfPoints: StateFlow<List<IperfPoint>> = _iperfPoints.asStateFlow()
     private val _isIperfRunning = MutableStateFlow(false)
     val isIperfRunning: StateFlow<Boolean> = _isIperfRunning.asStateFlow()
     private var iperfJob: Job? = null
+
+    fun refreshIperfStatus() {
+        iperfBinaryStatusText.value = IperfEngine.getBinaryStatusInfo(getApplication())
+        iperfLocalIps.value = IperfEngine.getLocalIpAddresses()
+    }
+
+    fun downloadIperfBinary() {
+        if (isIperfDownloading.value) return
+        viewModelScope.launch {
+            isIperfDownloading.value = true
+            iperfDownloadProgress.value = "准备下载 iPerf3 官方原生二进制文件..."
+            val result = IperfEngine.downloadOrUpdateBinaryOnline(
+                context = getApplication(),
+                sourceChoice = iperfSourceChoice.value,
+                customProxy = iperfCustomProxy.value
+            ) { progress ->
+                iperfDownloadProgress.value = progress
+            }
+            if (result.isSuccess) {
+                iperfBinaryStatusText.value = IperfEngine.getBinaryStatusInfo(getApplication())
+            }
+            isIperfDownloading.value = false
+        }
+    }
+
+    fun verifyIperfBinary(onResult: ((String) -> Unit)? = null) {
+        if (isIperfVerifying.value) return
+        viewModelScope.launch {
+            isIperfVerifying.value = true
+            iperfVerifyStatusText.value = "正在调用 native_bin/iperf3 验证运行..."
+            val res = IperfEngine.verifyBinary(getApplication(), iperfExecMode.value)
+            iperfVerifyStatusText.value = res
+            isIperfVerifying.value = false
+            onResult?.invoke(res)
+        }
+    }
 
     fun startIperf() {
         iperfJob?.cancel()
@@ -572,7 +621,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iperfJob = viewModelScope.launch {
             try {
                 if (iperfMode.value == "SERVER") {
-                    IperfEngine.runServerMode(listenPort = iperfPort.value).collect { point ->
+                    IperfEngine.runServerMode(
+                        context = getApplication(),
+                        listenPort = iperfPort.value,
+                        execMode = iperfExecMode.value
+                    ).collect { point ->
                         _iperfPoints.value = _iperfPoints.value + point
                     }
                 } else {
@@ -584,7 +637,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         protocol = iperfProtocol.value,
                         bandwidthLimit = iperfBandwidth.value,
                         parallelStreams = iperfParallel.value,
-                        isReverse = iperfIsReverse.value
+                        isReverse = iperfIsReverse.value,
+                        execMode = iperfExecMode.value
                     ).collect { point ->
                         _iperfPoints.value = _iperfPoints.value + point
                     }
@@ -698,7 +752,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             isFscanVerifying.value = true
             fscanVerifyStatusText.value = "正在验证二进制架构与可执行性..."
-            val result = FscanEngine.verifyBinary(getApplication())
+            val result = FscanEngine.verifyBinary(getApplication(), fscanExecMode.value)
             fscanVerifyStatusText.value = result
             isFscanVerifying.value = false
         }

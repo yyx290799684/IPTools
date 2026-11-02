@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -72,6 +73,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.yangyx.iptools.data.tools.DownloadProxyManager
+import com.yangyx.iptools.data.tools.ProcessExecMode
 import com.yangyx.iptools.ui.viewmodel.MainViewModel
 
 @Composable
@@ -94,11 +96,13 @@ fun FscanScreen(viewModel: MainViewModel) {
     val fscanVerifyStatus by viewModel.fscanVerifyStatusText.collectAsStateWithLifecycle()
     val isFscanVerifying by viewModel.isFscanVerifying.collectAsStateWithLifecycle()
     val rootState by viewModel.rootState.collectAsStateWithLifecycle()
+    val fscanExecMode by viewModel.fscanExecMode.collectAsStateWithLifecycle()
 
     var selectedViewMode by remember { mutableIntStateOf(0) } // 0: 终端日志, 1: 卡片视图
     var isPortRangeExpanded by remember { mutableStateOf(false) }
     var isBinaryCardExpanded by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val logListState = rememberLazyListState()
 
     LazyColumn(
         modifier = Modifier
@@ -205,6 +209,37 @@ fun FscanScreen(viewModel: MainViewModel) {
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text("检测 Root", fontSize = 12.sp, maxLines = 1, softWrap = false)
                             }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = "进程启动执行权限模式:",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = fscanExecMode == ProcessExecMode.AUTO,
+                                onClick = { viewModel.fscanExecMode.value = ProcessExecMode.AUTO },
+                                label = { Text("⚡ 智能自动 (优先非Root/Linker)") }
+                            )
+                            FilterChip(
+                                selected = fscanExecMode == ProcessExecMode.NON_ROOT,
+                                onClick = { viewModel.fscanExecMode.value = ProcessExecMode.NON_ROOT },
+                                label = { Text("🛡️ 强制非 Root 普通权限") }
+                            )
+                            FilterChip(
+                                selected = fscanExecMode == ProcessExecMode.ROOT,
+                                onClick = { viewModel.fscanExecMode.value = ProcessExecMode.ROOT },
+                                label = { Text("🔑 仅使用 Root 权限") }
+                            )
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -561,11 +596,10 @@ fun FscanScreen(viewModel: MainViewModel) {
 
             if (selectedViewMode == 0) {
                 item {
-                    val logListState = rememberLazyListState()
                     val logs = prog.logs
 
-                    LaunchedEffect(logs.size) {
-                        if (logs.isNotEmpty()) {
+                    LaunchedEffect(logs.size, isRunning) {
+                        if (logs.isNotEmpty() && isRunning) {
                             try {
                                 logListState.scrollToItem((logs.size - 1).coerceAtLeast(0))
                             } catch (_: Exception) {}
@@ -622,7 +656,10 @@ fun FscanScreen(viewModel: MainViewModel) {
                                     state = logListState,
                                     modifier = Modifier.fillMaxSize()
                                 ) {
-                                    items(logs) { logLine ->
+                                    itemsIndexed(
+                                        items = logs,
+                                        key = { index, _ -> index }
+                                    ) { _, logLine ->
                                         val textColor = when {
                                             logLine.startsWith("[+] Web Title") -> Color(0xFF00E676) // Bright green
                                             logLine.startsWith("[+] Port scan") -> Color(0xFF00E5FF) // Cyan

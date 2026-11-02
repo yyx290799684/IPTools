@@ -27,11 +27,13 @@ class IpToolsBackgroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        serviceInstance = this
         acquireWakeAndWifiLocks()
         createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        serviceInstance = this
         val action = intent?.action ?: ACTION_SYNC_TASKS
 
         when (action) {
@@ -61,6 +63,22 @@ class IpToolsBackgroundService : Service() {
             return START_NOT_STICKY
         }
 
+        updateNotificationDirectly(force = true)
+        return START_STICKY
+    }
+
+    fun updateNotificationDirectly(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastNotificationUpdateTime < 1200L) {
+            return
+        }
+        lastNotificationUpdateTime = now
+
+        if (activeTasksMap.isEmpty()) {
+            stopForegroundAndSelf()
+            return
+        }
+
         val notification = buildForegroundNotification()
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -80,8 +98,6 @@ class IpToolsBackgroundService : Service() {
                 startForeground(NOTIFICATION_ID, notification)
             } catch (_: Exception) {}
         }
-
-        return START_STICKY
     }
 
     private fun acquireWakeAndWifiLocks() {
@@ -216,6 +232,9 @@ class IpToolsBackgroundService : Service() {
     }
 
     override fun onDestroy() {
+        if (serviceInstance == this) {
+            serviceInstance = null
+        }
         releaseLocks()
         super.onDestroy()
     }
@@ -245,46 +264,69 @@ class IpToolsBackgroundService : Service() {
         const val KEY_TRACE = "TRACE"
 
         private val activeTasksMap = ConcurrentHashMap<String, String>()
+        private var serviceInstance: IpToolsBackgroundService? = null
+        private var lastNotificationUpdateTime = 0L
 
         var onStopAllRequestedListener: (() -> Unit)? = null
 
         fun startOrUpdateTask(context: Context, taskKey: String, taskDescription: String) {
             activeTasksMap[taskKey] = taskDescription
-            val intent = Intent(context, IpToolsBackgroundService::class.java).apply {
-                action = ACTION_UPDATE_TASK
-                putExtra(EXTRA_TASK_KEY, taskKey)
-                putExtra(EXTRA_TASK_DESC, taskDescription)
-            }
-            try {
-                ContextCompat.startForegroundService(context, intent)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to start foreground service: ${e.message}")
+            val instance = serviceInstance
+            if (instance != null) {
+                // If service is already running, update notification directly without IPC / intent thrashing
+                instance.updateNotificationDirectly(force = false)
+            } else {
+                val intent = Intent(context, IpToolsBackgroundService::class.java).apply {
+                    action = ACTION_UPDATE_TASK
+                    putExtra(EXTRA_TASK_KEY, taskKey)
+                    putExtra(EXTRA_TASK_DESC, taskDescription)
+                }
+                try {
+                    ContextCompat.startForegroundService(context, intent)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to start foreground service: ${e.message}")
+                }
             }
         }
 
         fun removeTask(context: Context, taskKey: String) {
             activeTasksMap.remove(taskKey)
+            val instance = serviceInstance
             if (activeTasksMap.isEmpty()) {
-                stopAll(context)
-            } else {
-                val intent = Intent(context, IpToolsBackgroundService::class.java).apply {
-                    action = ACTION_REMOVE_TASK
-                    putExtra(EXTRA_TASK_KEY, taskKey)
+                if (instance != null) {
+                    instance.stopForegroundAndSelf()
+                } else {
+                    stopAll(context)
                 }
-                try {
-                    ContextCompat.startForegroundService(context, intent)
-                } catch (_: Exception) {}
+            } else {
+                if (instance != null) {
+                    instance.updateNotificationDirectly(force = true)
+                } else {
+                    val intent = Intent(context, IpToolsBackgroundService::class.java).apply {
+                        action = ACTION_REMOVE_TASK
+                        putExtra(EXTRA_TASK_KEY, taskKey)
+                    }
+                    try {
+                        ContextCompat.startForegroundService(context, intent)
+                    } catch (_: Exception) {}
+                }
             }
         }
 
         fun stopAll(context: Context) {
             activeTasksMap.clear()
-            val intent = Intent(context, IpToolsBackgroundService::class.java).apply {
-                action = ACTION_STOP_ALL_TASKS
+            val instance = serviceInstance
+            if (instance != null) {
+                instance.stopAllTasksInternal()
+                instance.stopForegroundAndSelf()
+            } else {
+                val intent = Intent(context, IpToolsBackgroundService::class.java).apply {
+                    action = ACTION_STOP_ALL_TASKS
+                }
+                try {
+                    context.startService(intent)
+                } catch (_: Exception) {}
             }
-            try {
-                context.startService(intent)
-            } catch (_: Exception) {}
         }
 
         fun hasActiveTasks(): Boolean = activeTasksMap.isNotEmpty()

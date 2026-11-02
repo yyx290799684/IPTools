@@ -1,8 +1,116 @@
 <?xml version="1.0" encoding="utf-8"?>
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item
-        android:width="66dp"
-        android:height="66dp"
-        android:drawable="@drawable/ic_iptools_logo_1786410479666"
-        android:gravity="center" />
-</layer-list>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Ambient Floating Drop Shadow for tactile Material depth (centered around 54,54) -->
+    <path
+        android:pathData="M54,42 A14,14 0 1,0 54,70 A14,14 0 1,0 54,42 Z"
+        android:strokeWidth="3.5"
+        android:strokeColor="#1F000000" />
+    <path
+        android:pathData="M33,63 C38,74 63,71 75,49 C70,38 45,41 33,63 Z"
+        android:strokeWidth="3"
+        android:strokeColor="#1A000000" />
+
+    <!-- Orbital Network Track (Sweeping planetary orbit representing packets and routing) -->
+    <path
+        android:pathData="M33,61 C38,72 63,69 75,47 C70,36 45,39 33,61 Z"
+        android:strokeWidth="2.6"
+        android:strokeColor="#F5D0FE"
+        android:strokeLineCap="round" />
+
+    <!-- Signal Transmission Pulse Waves (Upper Right Radar/Wi-Fi/Ping echoes) -->
+    <path
+        android:pathData="M63,38 C67,41 70,45 72,49"
+        android:strokeWidth="2.0"
+        android:strokeColor="#E879F9"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M67,34 C73,37 76,42 77,47"
+        android:strokeWidth="2.2"
+        android:strokeColor="#FDE047"
+        android:strokeLineCap="round" />
+
+    <!-- Central Globe: Outer Sphere Ring -->
+    <path
+        android:pathData="M54,40 A14,14 0 1,0 54,68 A14,14 0 1,0 54,40 Z"
+        android:strokeWidth="2.8"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round" />
+
+    <!-- Globe Equator -->
+    <path
+        android:pathData="M40,54 L68,54"
+        android:strokeWidth="2.2"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round" />
+
+    <!-- Globe Prime Meridian (Vertical) -->
+    <path
+        android:pathData="M54,40 L54,68"
+        android:strokeWidth="2.2"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round" />
+
+    <!-- Globe Curved Meridians (Longitude arcs) -->
+    <path
+        android:pathData="M54,40 C47,44 47,64 54,68"
+        android:strokeWidth="1.8"
+        android:strokeColor="#F3E8FF" />
+    <path
+        android:pathData="M54,40 C61,44 61,64 54,68"
+        android:strokeWidth="1.8"
+        android:strokeColor="#F3E8FF" />
+
+    <!-- Globe Curved Latitudes -->
+    <path
+        android:pathData="M44,47 C47,49 61,49 64,47"
+        android:strokeWidth="1.6"
+        android:strokeColor="#F3E8FF" />
+    <path
+        android:pathData="M44,61 C47,59 61,59 64,61"
+        android:strokeWidth="1.6"
+        android:strokeColor="#F3E8FF" />
+
+    <!-- High-Visibility Orbital IP Nodes -->
+    <!-- Node 1: Client Node (Bottom Left) -->
+    <path
+        android:pathData="M33,61 m-3.6,0 a3.6,3.6 0 1,0 7.2,0 a3.6,3.6 0 1,0 -7.2,0"
+        android:fillColor="#F43F5E" />
+    <path
+        android:pathData="M33,61 m-1.8,0 a1.8,1.8 0 1,0 3.6,0 a1.8,1.8 0 1,0 -3.6,0"
+        android:fillColor="#FFFFFF" />
+
+    <!-- Node 2: Server Node (Top Right) -->
+    <path
+        android:pathData="M75,47 m-3.6,0 a3.6,3.6 0 1,0 7.2,0 a3.6,3.6 0 1,0 -7.2,0"
+        android:fillColor="#A855F7" />
+    <path
+        android:pathData="M75,47 m-1.8,0 a1.8,1.8 0 1,0 3.6,0 a1.8,1.8 0 1,0 -3.6,0"
+        android:fillColor="#FFFFFF" />
+
+    <!-- Node 3: Gateway Relay (Upper Loop) -->
+    <path
+        android:pathData="M57,36 m-2.5,0 a2.5,2.5 0 1,0 5.0,0 a2.5,2.5 0 1,0 -5.0,0"
+        android:fillColor="#FFFFFF" />
+
+    <!-- Node 4: Packet Node (Lower Loop) -->
+    <path
+        android:pathData="M51,72 m-2.4,0 a2.4,2.4 0 1,0 4.8,0 a2.4,2.4 0 1,0 -4.8,0"
+        android:fillColor="#F0ABFC" />
+
+    <!-- Central Host Pulse Node (Center 54, 54) -->
+    <path
+        android:pathData="M54,54 m-3.6,0 a3.6,3.6 0 1,0 7.2,0 a3.6,3.6 0 1,0 -7.2,0"
+        android:fillColor="#FFFFFF" />
+    <path
+        android:pathData="M54,54 m-2.0,0 a2.0,2.0 0 1,0 4.0,0 a2.0,2.0 0 1,0 -4.0,0"
+        android:fillColor="#6D28D9" />
+
+</vector>
+
+
+

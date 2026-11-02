@@ -7,36 +7,53 @@ import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
@@ -45,8 +62,11 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,18 +77,25 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.yangyx.iptools.data.tools.DownloadProxyManager
 import com.yangyx.iptools.data.tools.IperfPoint
+import com.yangyx.iptools.data.tools.ProcessExecMode
 import com.yangyx.iptools.ui.viewmodel.MainViewModel
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun IperfScreen(viewModel: MainViewModel) {
     val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+
     val serverHost by viewModel.iperfServer.collectAsStateWithLifecycle()
     val serverPort by viewModel.iperfPort.collectAsStateWithLifecycle()
     val duration by viewModel.iperfDuration.collectAsStateWithLifecycle()
@@ -78,8 +105,26 @@ fun IperfScreen(viewModel: MainViewModel) {
     val parallel by viewModel.iperfParallel.collectAsStateWithLifecycle()
     val isReverse by viewModel.iperfIsReverse.collectAsStateWithLifecycle()
 
+    val binaryStatus by viewModel.iperfBinaryStatusText.collectAsStateWithLifecycle()
+    val isDownloading by viewModel.isIperfDownloading.collectAsStateWithLifecycle()
+    val downloadProgress by viewModel.iperfDownloadProgress.collectAsStateWithLifecycle()
+    val isVerifying by viewModel.isIperfVerifying.collectAsStateWithLifecycle()
+    val verifyStatusText by viewModel.iperfVerifyStatusText.collectAsStateWithLifecycle()
+    val sourceChoice by viewModel.iperfSourceChoice.collectAsStateWithLifecycle()
+    val customProxy by viewModel.iperfCustomProxy.collectAsStateWithLifecycle()
+    val localIps by viewModel.iperfLocalIps.collectAsStateWithLifecycle()
+    val rootState by viewModel.rootState.collectAsStateWithLifecycle()
+    val iperfExecMode by viewModel.iperfExecMode.collectAsStateWithLifecycle()
+
     val points by viewModel.iperfPoints.collectAsStateWithLifecycle()
     val isRunning by viewModel.isIperfRunning.collectAsStateWithLifecycle()
+
+    var isBinaryCardExpanded by remember { mutableStateOf(false) }
+    val logListState = rememberLazyListState()
+
+    LaunchedEffect(Unit) {
+        viewModel.refreshIperfStatus()
+    }
 
     // Calculate real-time stats for live dashboard
     val intervalPoints = points.filter { !it.isComplete && it.sec > 0 }
@@ -92,22 +137,277 @@ fun IperfScreen(viewModel: MainViewModel) {
     val progressFraction = if (duration > 0) (currentSec.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
 
     val logMessages = points.mapNotNull { if (it.logMessage.isNotBlank()) it.logMessage else null }
+    val activeClient = points.lastOrNull { it.clientIp.isNotBlank() }?.clientIp ?: ""
+
+    val primaryLocalIp = localIps.firstOrNull()?.split(" ")?.firstOrNull() ?: "192.168.1.100"
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            Text(
-                text = "iPerf3 网络性能与带宽测试",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "iPerf3 网络性能与带宽测试",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "支持官方原生 CLI 模式 (iperf3 -s / -c) 与 JNI 高兼容引擎",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
 
-        // Configuration Card
+        // 1. Native Binary Management Card (Styled after Fscan)
+        item {
+            OutlinedCard(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { isBinaryCardExpanded = !isBinaryCardExpanded },
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = "iPerf3 官方 Native 二进制引擎",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Surface(
+                                shape = MaterialTheme.shapes.extraSmall,
+                                color = MaterialTheme.colorScheme.primaryContainer
+                            ) {
+                                Text(
+                                    text = "GitHub Release",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        IconButton(
+                            onClick = { isBinaryCardExpanded = !isBinaryCardExpanded },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isBinaryCardExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = if (isBinaryCardExpanded) "收起" else "展开"
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "状态: $binaryStatus",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    if (isBinaryCardExpanded) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "二进制文件: native_bin/iperf3",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = MaterialTheme.shapes.extraSmall,
+                                color = if (rootState.isRooted) Color(0xFF1B5E20) else MaterialTheme.colorScheme.surfaceVariant
+                            ) {
+                                Text(
+                                    text = "⚡ Root 提权: ${rootState.label}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (rootState.isRooted) Color(0xFF81C784) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+
+                            OutlinedButton(
+                                onClick = { viewModel.refreshRootState() },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("检测 Root", fontSize = 12.sp, maxLines = 1, softWrap = false)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = "进程启动执行权限模式:",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = iperfExecMode == ProcessExecMode.AUTO,
+                                onClick = { viewModel.iperfExecMode.value = ProcessExecMode.AUTO },
+                                label = { Text("⚡ 智能自动 (优先非Root/Linker)") }
+                            )
+                            FilterChip(
+                                selected = iperfExecMode == ProcessExecMode.NON_ROOT,
+                                onClick = { viewModel.iperfExecMode.value = ProcessExecMode.NON_ROOT },
+                                label = { Text("🛡️ 强制非 Root 普通权限") }
+                            )
+                            FilterChip(
+                                selected = iperfExecMode == ProcessExecMode.ROOT,
+                                onClick = { viewModel.iperfExecMode.value = ProcessExecMode.ROOT },
+                                label = { Text("🔑 仅使用 Root 权限") }
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = "选择更新下载源 / 加速代理节点:",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            DownloadProxyManager.PROXY_NODES.forEach { pair ->
+                                FilterChip(
+                                    selected = sourceChoice == pair.first,
+                                    onClick = { viewModel.iperfSourceChoice.value = pair.first },
+                                    label = { Text(pair.second) }
+                                )
+                            }
+                        }
+
+                        if (sourceChoice == "CUSTOM") {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = customProxy,
+                                onValueChange = { viewModel.iperfCustomProxy.value = it },
+                                label = { Text("自定义代理地址 (域名或完整前缀)") },
+                                placeholder = { Text("例如: https://ghproxy.net/ 或 gh.dpik.top") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+
+                        if (downloadProgress.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = downloadProgress,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                        }
+
+                        if (isDownloading) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        }
+
+                        if (verifyStatusText.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = verifyStatusText,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(8.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { viewModel.downloadIperfBinary() },
+                                enabled = !isDownloading && !isVerifying,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                if (isDownloading) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("更新中...", fontSize = 12.sp)
+                                } else {
+                                    Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("下载/更新引擎", fontSize = 12.sp)
+                                }
+                            }
+
+                            OutlinedButton(
+                                onClick = { viewModel.verifyIperfBinary() },
+                                enabled = !isDownloading && !isVerifying,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                if (isVerifying) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("验证中...", fontSize = 12.sp)
+                                } else {
+                                    Icon(imageVector = Icons.Default.Terminal, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("验证 (iperf3 -v)", fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Configuration & Parameter Card
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -139,9 +439,167 @@ fun IperfScreen(viewModel: MainViewModel) {
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
 
-                    if (iperfMode == "CLIENT") {
+                    if (iperfMode == "SERVER") {
+                        // Server Mode Configuration & Spacious Command Display
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.Wifi,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "本机局域网 IP (供其他设备连接)",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { viewModel.refreshIperfStatus() },
+                                        modifier = Modifier.size(26.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = "刷新",
+                                            modifier = Modifier.size(16.dp),
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(6.dp))
+                                localIps.forEach { ipStr ->
+                                    Text(
+                                        text = "• $ipStr",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                // Command Block 1: Server Command
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(10.dp)) {
+                                        Text(
+                                            text = "官方服务端指令 (当前设备运行):",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "iperf3 -s -p $serverPort -i 1",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontFamily = FontFamily.Monospace,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            IconButton(
+                                                onClick = {
+                                                    val cmd = "iperf3 -s -p $serverPort -i 1"
+                                                    clipboardManager.setText(AnnotatedString(cmd))
+                                                    Toast.makeText(context, "已复制服务端指令: $cmd", Toast.LENGTH_SHORT).show()
+                                                },
+                                                modifier = Modifier.size(28.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.ContentCopy,
+                                                    contentDescription = "复制服务端指令",
+                                                    modifier = Modifier.size(16.dp),
+                                                    tint = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                // Command Block 2: Client Command to Connect
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(10.dp)) {
+                                        Text(
+                                            text = "客户端测速指令 (电脑/其他手机执行):",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "iperf3 -c $primaryLocalIp -p $serverPort",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontFamily = FontFamily.Monospace,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.secondary,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            IconButton(
+                                                onClick = {
+                                                    val cmd = "iperf3 -c $primaryLocalIp -p $serverPort"
+                                                    clipboardManager.setText(AnnotatedString(cmd))
+                                                    Toast.makeText(context, "已复制客户端指令: $cmd", Toast.LENGTH_SHORT).show()
+                                                },
+                                                modifier = Modifier.size(28.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.ContentCopy,
+                                                    contentDescription = "复制客户端指令",
+                                                    modifier = Modifier.size(16.dp),
+                                                    tint = MaterialTheme.colorScheme.secondary
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        OutlinedTextField(
+                            value = serverPort.toString(),
+                            onValueChange = { viewModel.iperfPort.value = it.toIntOrNull() ?: 5201 },
+                            label = { Text("服务端监听端口 (默认 5201)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                    } else {
+                        // Client Mode Configuration
                         OutlinedTextField(
                             value = serverHost,
                             onValueChange = { viewModel.iperfServer.value = it },
@@ -151,18 +609,16 @@ fun IperfScreen(viewModel: MainViewModel) {
                         )
 
                         Spacer(modifier = Modifier.height(12.dp))
-                    }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        OutlinedTextField(
-                            value = serverPort.toString(),
-                            onValueChange = { viewModel.iperfPort.value = it.toIntOrNull() ?: 5201 },
-                            label = { Text("端口 (默认 5201)") },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true
-                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            OutlinedTextField(
+                                value = serverPort.toString(),
+                                onValueChange = { viewModel.iperfPort.value = it.toIntOrNull() ?: 5201 },
+                                label = { Text("端口 (默认 5201)") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true
+                            )
 
-                        if (iperfMode == "CLIENT") {
                             OutlinedTextField(
                                 value = duration.toString(),
                                 onValueChange = { viewModel.iperfDuration.value = it.toIntOrNull() ?: 5 },
@@ -171,9 +627,7 @@ fun IperfScreen(viewModel: MainViewModel) {
                                 singleLine = true
                             )
                         }
-                    }
 
-                    if (iperfMode == "CLIENT") {
                         Spacer(modifier = Modifier.height(12.dp))
 
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -205,7 +659,7 @@ fun IperfScreen(viewModel: MainViewModel) {
                                 onCheckedChange = { viewModel.iperfIsReverse.value = it }
                             )
                             Text(
-                                text = "反向压测 -R (Server 向 手机发包/测下载速)",
+                                text = "反向压测 -R (Server 向 手机发包/测手机下载速率)",
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }
@@ -218,14 +672,14 @@ fun IperfScreen(viewModel: MainViewModel) {
                                 onClick = { viewModel.iperfProtocol.value = "TCP" },
                                 shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
                             ) {
-                                Text("TCP 传输")
+                                Text("TCP 传输协议")
                             }
                             SegmentedButton(
                                 selected = protocol == "UDP",
                                 onClick = { viewModel.iperfProtocol.value = "UDP" },
                                 shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
                             ) {
-                                Text("UDP 传输")
+                                Text("UDP 传输协议")
                             }
                         }
                     }
@@ -244,9 +698,11 @@ fun IperfScreen(viewModel: MainViewModel) {
                             Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                if (isRunning) "iPerf 压测中..."
-                                else if (iperfMode == "SERVER") "启动 iPerf Server 监听"
-                                else "启动 iPerf Client 测速"
+                                if (isRunning) {
+                                    if (iperfMode == "SERVER") "服务端监听运行中..." else "iPerf 客户端压测中..."
+                                } else {
+                                    if (iperfMode == "SERVER") "启动 iPerf3 Server 官方监听 (-s)" else "启动 iPerf3 客户端测速 (-c)"
+                                }
                             )
                         }
 
@@ -265,7 +721,7 @@ fun IperfScreen(viewModel: MainViewModel) {
             }
         }
 
-        // Live Real-Time Dashboard Card (Active during test or after completion)
+        // 3. Live Real-Time Dashboard Card (Active during test or after completion)
         if (isRunning || points.isNotEmpty()) {
             item {
                 ElevatedCard(
@@ -289,7 +745,9 @@ fun IperfScreen(viewModel: MainViewModel) {
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = if (isRunning) "实时带宽测速看板" else "测速概览看板",
+                                    text = if (isRunning) {
+                                        if (iperfMode == "SERVER") "服务端实时监听看板" else "实时带宽测速看板"
+                                    } else "测速概览看板",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -301,12 +759,24 @@ fun IperfScreen(viewModel: MainViewModel) {
                                 color = if (isRunning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
                             ) {
                                 Text(
-                                    text = if (isRunning) "正在传输..." else "已完成",
+                                    text = if (isRunning) {
+                                        if (iperfMode == "SERVER") "🟢 监听中: 0.0.0.0:$serverPort" else "正在发包测速..."
+                                    } else "已完成",
                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = if (isRunning) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
+                        }
+
+                        if (activeClient.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "已连接客户端: $activeClient",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
                         }
 
                         Spacer(modifier = Modifier.height(12.dp))
@@ -329,7 +799,7 @@ fun IperfScreen(viewModel: MainViewModel) {
                                     fontFamily = FontFamily.Monospace
                                 )
                                 Text(
-                                    text = "Mbits / sec (吞吐速率)",
+                                    text = "Mbits / sec (实时吞吐速率)",
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -337,7 +807,7 @@ fun IperfScreen(viewModel: MainViewModel) {
                             }
                         }
 
-                        if (isRunning) {
+                        if (isRunning && iperfMode == "CLIENT") {
                             Spacer(modifier = Modifier.height(12.dp))
                             LinearProgressIndicator(
                                 progress = { progressFraction },
@@ -356,8 +826,8 @@ fun IperfScreen(viewModel: MainViewModel) {
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             MetricTile(
-                                label = "进度时长",
-                                value = if (completedPoint != null) "${duration} / ${duration}s" else "${currentSec} / ${duration}s",
+                                label = if (iperfMode == "SERVER") "已运行时间" else "进度时长",
+                                value = if (completedPoint != null) "${duration} / ${duration}s" else "${currentSec}s",
                                 modifier = Modifier.weight(1f)
                             )
                             MetricTile(
@@ -366,8 +836,8 @@ fun IperfScreen(viewModel: MainViewModel) {
                                 modifier = Modifier.weight(1f)
                             )
                             MetricTile(
-                                label = "并发线程",
-                                value = "$parallel Stream",
+                                label = if (iperfMode == "SERVER") "监听端口" else "并发线程",
+                                value = if (iperfMode == "SERVER") ":$serverPort" else "$parallel Stream",
                                 modifier = Modifier.weight(1f)
                             )
                         }
@@ -381,60 +851,67 @@ fun IperfScreen(viewModel: MainViewModel) {
             }
         }
 
-        // Final Report Summary Card
+        // 4. Final Report Summary Card
         completedPoint?.let { completed ->
-            item {
-                ElevatedCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.elevatedCardColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+            if (completed.summaryText.isNotBlank()) {
+                item {
+                    ElevatedCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.elevatedCardColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "iPerf3 最终测试报告",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+
+                                IconButton(
+                                    onClick = {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("iPerf Summary", completed.summaryText))
+                                        Toast.makeText(context, "已复制测试报告到剪贴板", Toast.LENGTH_SHORT).show()
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ContentCopy,
+                                        contentDescription = "复制报告",
+                                        tint = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "iPerf3 最终测试报告",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
+                                text = completed.summaryText,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontFamily = FontFamily.Monospace,
                                 color = MaterialTheme.colorScheme.onSecondaryContainer
                             )
-
-                            IconButton(
-                                onClick = {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    clipboard.setPrimaryClip(ClipData.newPlainText("iPerf Summary", completed.summaryText))
-                                    Toast.makeText(context, "已复制测试报告到剪贴板", Toast.LENGTH_SHORT).show()
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ContentCopy,
-                                    contentDescription = "复制报告",
-                                    tint = MaterialTheme.colorScheme.onSecondaryContainer
-                                )
-                            }
                         }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = completed.summaryText,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
                     }
                 }
             }
         }
 
-        // Simplified Control / Socket Log Messages (only connection/status events, excluding redundant interval lines)
+        // 5. Terminal Output & Socket Stream Logs
         if (logMessages.isNotEmpty()) {
             item {
-                val context = androidx.compose.ui.platform.LocalContext.current
-                val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+                LaunchedEffect(logMessages.size, isRunning) {
+                    if (logMessages.isNotEmpty() && isRunning) {
+                        try {
+                            logListState.scrollToItem((logMessages.size - 1).coerceAtLeast(0))
+                        } catch (_: Exception) {}
+                    }
+                }
 
                 OutlinedCard(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(12.dp)) {
@@ -444,89 +921,70 @@ fun IperfScreen(viewModel: MainViewModel) {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "控制信道与连接日志",
+                                text = "iPerf3 终端控制与输出日志 (${logMessages.size} 行)",
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
                             )
                             IconButton(
                                 onClick = {
-                                    clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(logMessages.joinToString("\n")))
-                                    Toast.makeText(context, "已复制 iPerf3 控制日志", Toast.LENGTH_SHORT).show()
+                                    clipboardManager.setText(AnnotatedString(logMessages.joinToString("\n")))
+                                    Toast.makeText(context, "已复制日志到剪贴板", Toast.LENGTH_SHORT).show()
                                 },
                                 modifier = Modifier.size(28.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.ContentCopy,
-                                    contentDescription = "复制",
-                                    modifier = Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.primary
+                                    contentDescription = "复制日志",
+                                    modifier = Modifier.size(16.dp)
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        logMessages.takeLast(10).forEach { msg ->
-                            Text(
-                                text = "• $msg",
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            }
-        }
 
-        // Section Title for Interval Data Points
-        if (intervalPoints.isNotEmpty()) {
-            item {
-                Text(
-                    text = "每秒实时压测序列 (Intervals)",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            }
+                        Spacer(modifier = Modifier.height(8.dp))
 
-            items(intervalPoints) { pt ->
-                OutlinedCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 180.dp, max = 360.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF1E1E1E))
+                                .padding(10.dp)
                         ) {
-                            Text(
-                                text = "Interval ${(pt.sec - 1)}.0 - ${pt.sec}.0 s",
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .horizontalScroll(rememberScrollState())
+                            ) {
+                                LazyColumn(
+                                    state = logListState,
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    itemsIndexed(
+                                        items = logMessages,
+                                        key = { index, _ -> index }
+                                    ) { _, log ->
+                                        val textColor = when {
+                                            log.contains("Accepted connection", ignoreCase = true) -> Color(0xFF00E676)
+                                            log.contains("Server listening", ignoreCase = true) -> Color(0xFF00E5FF)
+                                            log.startsWith("🟢") -> Color(0xFF69F0AE)
+                                            log.startsWith("⚠️") || log.contains("error", ignoreCase = true) -> Color(0xFFFF8A80)
+                                            log.contains("sec") && log.contains("Mbits/sec") -> Color(0xFF81D4FA)
+                                            else -> Color(0xFFCFD8DC)
+                                        }
+
+                                        Text(
+                                            text = log,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 11.sp,
+                                            color = textColor,
+                                            lineHeight = 15.sp,
+                                            softWrap = false
+                                        )
+                                    }
+                                }
+                            }
                         }
-
-                        Text(
-                            text = "${String.format("%.2f", pt.transferMB)} MB",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-
-                        Text(
-                            text = "${String.format("%.2f", pt.bitrateMbps)} Mbits/s",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.primary
-                        )
                     }
                 }
             }
@@ -535,16 +993,18 @@ fun IperfScreen(viewModel: MainViewModel) {
 }
 
 @Composable
-fun IperfBitrateChart(
-    points: List<IperfPoint>,
-    modifier: Modifier = Modifier
-) {
-    val intervalPoints = remember(points) { points.filter { !it.isComplete && it.sec > 0 } }
+private fun IperfBitrateChart(points: List<IperfPoint>) {
+    val intervalPoints = points.filter { !it.isComplete && it.sec > 0 }
+    if (intervalPoints.isEmpty()) return
 
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+    val maxRate = (intervalPoints.maxOfOrNull { it.bitrateMbps } ?: 100f).coerceAtLeast(10f) * 1.2f
+    val lineColor = MaterialTheme.colorScheme.primary
+    val gridColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surface
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -554,46 +1014,25 @@ fun IperfBitrateChart(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "📈 速率实时变化折线图",
-                    style = MaterialTheme.typography.titleMedium,
+                    text = "速率变化曲线 (Mbps / 秒)",
+                    style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
-
-                if (intervalPoints.isNotEmpty()) {
-                    val maxVal = intervalPoints.maxOf { it.bitrateMbps }
-                    val avgVal = intervalPoints.map { it.bitrateMbps }.average().toFloat()
-                    Text(
-                        text = "峰值: ${String.format("%.1f", maxVal)} Mbps | 均值: ${String.format("%.1f", avgVal)} Mbps",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
+                Text(
+                    text = "峰值: ${String.format("%.1f", intervalPoints.maxOf { it.bitrateMbps })} Mbps",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            if (intervalPoints.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(130.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "等待测速数据，开启后动态生成速率折线图...",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            } else {
-                val lineColor = MaterialTheme.colorScheme.primary
-                val gridColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
-
-                val maxRate = (intervalPoints.maxOfOrNull { it.bitrateMbps } ?: 10f).coerceAtLeast(1f) * 1.15f
-
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(150.dp)
+            ) {
                 Canvas(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -715,5 +1154,3 @@ private fun MetricTile(
         }
     }
 }
-
-

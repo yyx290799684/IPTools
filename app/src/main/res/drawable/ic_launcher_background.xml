@@ -5,6 +5,8 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+
+    <!-- Base Modern Vibrant Gradient: Royal Violet to Amethyst Magenta -->
     <path android:pathData="M0,0h108v108h-108z">
         <aapt:attr name="android:fillColor">
             <gradient
@@ -13,9 +15,37 @@
                 android:endX="108"
                 android:endY="108"
                 android:type="linear">
-                <item android:color="#0F172A" android:offset="0.0" />
-                <item android:color="#1E293B" android:offset="1.0" />
+                <item android:color="#4A1D96" android:offset="0.0" />
+                <item android:color="#7C3AED" android:offset="0.5" />
+                <item android:color="#C026D3" android:offset="1.0" />
             </gradient>
         </aapt:attr>
     </path>
+
+    <!-- Subtle Radial Specular Highlight in upper-left for Material 3 depth -->
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:centerX="36"
+                android:centerY="36"
+                android:gradientRadius="72"
+                android:type="radial">
+                <item android:color="#35FFFFFF" android:offset="0.0" />
+                <item android:color="#00FFFFFF" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Subtle background concentric network radar rings for sophisticated texture -->
+    <path
+        android:pathData="M54,54 m-36,0 a36,36 0 1,0 72,0 a36,36 0 1,0 -72,0"
+        android:strokeWidth="0.8"
+        android:strokeColor="#1EFFFFFF" />
+
+    <path
+        android:pathData="M54,54 m-48,0 a48,48 0 1,0 96,0 a48,48 0 1,0 -96,0"
+        android:strokeWidth="0.8"
+        android:strokeColor="#12FFFFFF" />
+
 </vector>
+
