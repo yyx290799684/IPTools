@@ -75,16 +75,18 @@ object IperfEngine {
             while (interfaces.hasMoreElements()) {
                 val iface = interfaces.nextElement()
                 if (iface.isLoopback || !iface.isUp) continue
-                val addrs = iface.inetAddresses
-                while (addrs.hasMoreElements()) {
-                    val addr = addrs.nextElement()
+                for (ifaceAddr in iface.interfaceAddresses) {
+                    val addr = ifaceAddr.address
+                    val prefix = ifaceAddr.networkPrefixLength.toInt()
                     if (!addr.isLoopbackAddress && addr is Inet4Address) {
-                        ips.add("${addr.hostAddress} (${iface.name})")
+                        val hostIp = addr.hostAddress ?: continue
+                        val ipWithMask = if (prefix in 1..32) "$hostIp/$prefix" else hostIp
+                        ips.add("$ipWithMask (${iface.name})")
                     }
                 }
             }
         } catch (_: Exception) {}
-        return if (ips.isEmpty()) listOf("127.0.0.1 (lo)") else ips
+        return if (ips.isEmpty()) listOf("127.0.0.1/8 (lo)") else ips
     }
 
     fun getBinaryStatusInfo(context: Context): String {

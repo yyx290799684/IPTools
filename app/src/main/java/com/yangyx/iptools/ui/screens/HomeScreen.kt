@@ -257,12 +257,23 @@ fun HomeScreen(viewModel: MainViewModel) {
         // IPv4 Row
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                val lanV4Subtitle = buildString {
+                    if (overview.lanSubnetMask.isNotBlank()) {
+                        append("掩码: ${overview.lanSubnetMask}")
+                    }
+                    if (overview.lanGateway.isNotBlank()) {
+                        if (isNotEmpty()) append(" • ")
+                        append("网关: ${overview.lanGateway}")
+                    }
+                }
+
                 IpCard(
                     modifier = Modifier.weight(1f),
                     title = "局域网 IPv4",
                     ip = overview.lanIpV4,
+                    subtitle = lanV4Subtitle,
                     icon = Icons.Default.Router,
-                    tag = "LAN",
+                    tag = if (overview.lanPrefixLength > 0) "/${overview.lanPrefixLength}" else "LAN",
                     onIpClick = { viewModel.selectIpForAction(overview.lanIpV4, "LAN IPv4") }
                 )
                 IpCard(
@@ -279,24 +290,28 @@ fun HomeScreen(viewModel: MainViewModel) {
 
         // IPv6 Row (Smart merge when local & public IPv6 are identical)
         item {
-            val lanV6Valid = overview.lanIpV6.isNotBlank() && !overview.lanIpV6.contains("未配置") && !overview.lanIpV6.contains("未")
+            val lanV6Valid = overview.rawLanIpV6.isNotBlank() && !overview.rawLanIpV6.contains("未配置") && !overview.rawLanIpV6.contains("未")
             val publicV6Valid = publicV6.isNotBlank() && !publicV6.contains("未配置") && !publicV6.contains("查询") && !publicV6.contains("无")
 
+            val cleanLanV6 = overview.lanIpV6.substringBefore("/").trim()
+            val cleanPubV6 = publicV6.substringBefore("/").trim()
+
             val isIpv6Identical = lanV6Valid && publicV6Valid && (
-                overview.lanIpV6.equals(publicV6, ignoreCase = true) ||
-                overview.lanIpV6.take(16).equals(publicV6.take(16), ignoreCase = true)
+                cleanLanV6.equals(cleanPubV6, ignoreCase = true) ||
+                cleanLanV6.take(16).equals(cleanPubV6.take(16), ignoreCase = true)
             )
 
             if (isIpv6Identical) {
                 // Merged IPv6 Card
+                val mergedIp = if (overview.lanIpV6.contains("/")) overview.lanIpV6 else publicV6
                 IpCard(
                     modifier = Modifier.fillMaxWidth(),
                     title = "直通 IPv6 全球单播地址 (局网与公网一致)",
-                    ip = publicV6,
+                    ip = mergedIp,
                     subtitle = (publicV6Info?.displayLocation?.takeIf { it.isNotBlank() } ?: "全球独立直连") + " • 本地网卡与外网公网直通",
                     icon = Icons.Default.Language,
-                    tag = "IPv6 GUA",
-                    onIpClick = { viewModel.selectIpForAction(publicV6, "IPv6 Global Address") }
+                    tag = if (overview.lanPrefixLengthV6 > 0) "/${overview.lanPrefixLengthV6}" else "IPv6 GUA",
+                    onIpClick = { viewModel.selectIpForAction(mergedIp, "IPv6 Global Address") }
                 )
             } else if (lanV6Valid && publicV6Valid) {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -305,7 +320,7 @@ fun HomeScreen(viewModel: MainViewModel) {
                         title = "局域网 IPv6",
                         ip = overview.lanIpV6,
                         icon = Icons.Default.Language,
-                        tag = "LAN v6",
+                        tag = if (overview.lanPrefixLengthV6 > 0) "/${overview.lanPrefixLengthV6}" else "LAN v6",
                         onIpClick = { viewModel.selectIpForAction(overview.lanIpV6, "LAN IPv6") }
                     )
                     IpCard(
@@ -334,7 +349,7 @@ fun HomeScreen(viewModel: MainViewModel) {
                     title = "局域网 IPv6",
                     ip = overview.lanIpV6,
                     icon = Icons.Default.Language,
-                    tag = "LAN v6",
+                    tag = if (overview.lanPrefixLengthV6 > 0) "/${overview.lanPrefixLengthV6}" else "LAN v6",
                     onIpClick = { viewModel.selectIpForAction(overview.lanIpV6, "LAN IPv6") }
                 )
             } else {

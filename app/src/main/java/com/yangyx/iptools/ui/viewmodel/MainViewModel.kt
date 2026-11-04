@@ -285,10 +285,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun scanLanSubnet() {
         if (_isLanScanning.value) return
-        val lanIp = _networkOverview.value.lanIpV4
+        val overview = _networkOverview.value
+        val lanIp = overview.lanIpV4
         if (lanIp == "未连接" || lanIp.isBlank()) return
 
-        val subnetCidr = lanIp.substringBeforeLast(".") + ".0/24"
+        val rawIp = overview.rawLanIpV4.ifBlank { lanIp.substringBefore("/").trim() }
+        val prefix = overview.lanPrefixLength
+
+        val subnetCidr = if (overview.lanNetworkCidr.isNotBlank() && prefix in 22..30) {
+            overview.lanNetworkCidr
+        } else {
+            rawIp.substringBeforeLast(".") + ".0/24"
+        }
+
         viewModelScope.launch {
             _isLanScanning.value = true
             _activeTaskName.value = "局域网设备扫描"
@@ -873,15 +882,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Quick Fill IP into tools
     fun quickFillIpToTool(ip: String, screen: AppScreen) {
+        val cleanHost = ip.substringBefore("/").trim()
         when (screen) {
-            AppScreen.PING -> pingHost.value = ip
-            AppScreen.TRACE -> traceHost.value = ip
-            AppScreen.PORT_SCAN -> portScanTarget.value = ip
-            AppScreen.FSCAN -> fscanTargetText.value = ip
-            AppScreen.IPERF -> iperfServer.value = ip
-            AppScreen.DNS -> dnsDomain.value = ip
-            AppScreen.WHOIS -> whoisQueryText.value = ip
-            AppScreen.IP_GEO -> runIpGeoQuery(ip)
+            AppScreen.PING -> pingHost.value = cleanHost
+            AppScreen.TRACE -> traceHost.value = cleanHost
+            AppScreen.PORT_SCAN -> portScanTarget.value = cleanHost
+            AppScreen.FSCAN -> fscanTargetText.value = ip // Fscan supports CIDR targets (e.g. 10.0.2.16/23)
+            AppScreen.IPERF -> iperfServer.value = cleanHost
+            AppScreen.DNS -> dnsDomain.value = cleanHost
+            AppScreen.WHOIS -> whoisQueryText.value = cleanHost
+            AppScreen.IP_GEO -> runIpGeoQuery(cleanHost)
             else -> {}
         }
         navigateTo(screen)

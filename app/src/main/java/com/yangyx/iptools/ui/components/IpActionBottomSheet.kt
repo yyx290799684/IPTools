@@ -172,17 +172,43 @@ fun IpActionBottomSheet(
                 }
             )
 
-            ActionItem(
-                icon = Icons.Default.ContentCopy,
-                title = "复制 IP 到剪贴板",
-                onClick = {
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    val clip = ClipData.newPlainText("IP Address", ip)
-                    clipboard.setPrimaryClip(clip)
-                    Toast.makeText(context, "已复制 $ip 到剪贴板", Toast.LENGTH_SHORT).show()
-                    onDismiss()
-                }
-            )
+            if (ip.contains("/")) {
+                val cleanIp = ip.substringBefore("/").trim()
+                ActionItem(
+                    icon = Icons.Default.ContentCopy,
+                    title = "复制 IP 及掩码 ($ip)",
+                    onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val clip = ClipData.newPlainText("IP Address with Mask", ip)
+                        clipboard.setPrimaryClip(clip)
+                        Toast.makeText(context, "已复制 $ip 到剪贴板", Toast.LENGTH_SHORT).show()
+                        onDismiss()
+                    }
+                )
+                ActionItem(
+                    icon = Icons.Default.ContentCopy,
+                    title = "仅复制纯 IP ($cleanIp)",
+                    onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val clip = ClipData.newPlainText("Pure IP Address", cleanIp)
+                        clipboard.setPrimaryClip(clip)
+                        Toast.makeText(context, "已复制 $cleanIp 到剪贴板", Toast.LENGTH_SHORT).show()
+                        onDismiss()
+                    }
+                )
+            } else {
+                ActionItem(
+                    icon = Icons.Default.ContentCopy,
+                    title = "复制 IP 到剪贴板",
+                    onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val clip = ClipData.newPlainText("IP Address", ip)
+                        clipboard.setPrimaryClip(clip)
+                        Toast.makeText(context, "已复制 $ip 到剪贴板", Toast.LENGTH_SHORT).show()
+                        onDismiss()
+                    }
+                )
+            }
         }
     }
 

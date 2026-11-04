@@ -21,10 +21,19 @@ import kotlinx.coroutines.flow.flowOn
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.NetworkInterface
+import java.util.Locale
 
 data class NetworkOverview(
     val lanIpV4: String = "未连接",
+    val rawLanIpV4: String = "",
+    val lanSubnetMask: String = "",
+    val lanPrefixLength: Int = 0,
+    val lanBroadcast: String = "",
+    val lanGateway: String = "",
+    val lanNetworkCidr: String = "",
     val lanIpV6: String = "未配置",
+    val rawLanIpV6: String = "",
+    val lanPrefixLengthV6: Int = 0,
     val wifiSsid: String = "未连接",
     val wifiBssid: String = "未连接",
     val wifiRssi: Int = 0, // dBm
@@ -57,67 +66,211 @@ data class DiscoveredDevice(
 
 object NetworkInfoScanner {
 
+    private data class CandidateV4(
+        val ifaceName: String,
+        val ip: String,
+        val prefixLength: Int,
+        val broadcast: String
+    )
+
+    private data class CandidateV6(
+        val ifaceName: String,
+        val ip: String,
+        val prefixLength: Int
+    )
+
+    fun prefixLengthToSubnetMask(prefix: Int): String {
+        if (prefix <= 0 || prefix > 32) return ""
+        val mask = (0xFFFFFFFFL shl (32 - prefix)) and 0xFFFFFFFFL
+        return String.format(
+            Locale.US,
+            "%d.%d.%d.%d",
+            (mask shr 24) and 0xFF,
+            (mask shr 16) and 0xFF,
+            (mask shr 8) and 0xFF,
+            mask and 0xFF
+        )
+    }
+
+    fun calculateSubnetCidr(ip: String, prefix: Int): String {
+        if (prefix <= 0 || prefix > 32) return ip
+        return try {
+            val parts = ip.split(".").map { it.toInt() }
+            if (parts.size != 4) return "$ip/$prefix"
+            var ipInt = 0L
+            for (p in parts) {
+                ipInt = (ipInt shl 8) or (p.toLong() and 0xFF)
+            }
+            val mask = (0xFFFFFFFFL shl (32 - prefix)) and 0xFFFFFFFFL
+            val netInt = ipInt and mask
+            String.format(
+                Locale.US,
+                "%d.%d.%d.%d/%d",
+                (netInt shr 24) and 0xFF,
+                (netInt shr 16) and 0xFF,
+                (netInt shr 8) and 0xFF,
+                netInt and 0xFF,
+                prefix
+            )
+        } catch (_: Exception) {
+            "$ip/$prefix"
+        }
+    }
+
+    fun calculateBroadcast(ip: String, prefix: Int): String {
+        if (prefix <= 0 || prefix >= 31) return ""
+        return try {
+            val parts = ip.split(".").map { it.toInt() }
+            if (parts.size != 4) return ""
+            var ipInt = 0L
+            for (p in parts) {
+                ipInt = (ipInt shl 8) or (p.toLong() and 0xFF)
+            }
+            val mask = (0xFFFFFFFFL shl (32 - prefix)) and 0xFFFFFFFFL
+            val bcastInt = ipInt or (mask.inv() and 0xFFFFFFFFL)
+            String.format(
+                Locale.US,
+                "%d.%d.%d.%d",
+                (bcastInt shr 24) and 0xFF,
+                (bcastInt shr 16) and 0xFF,
+                (bcastInt shr 8) and 0xFF,
+                bcastInt and 0xFF
+            )
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
     fun getNetworkOverview(context: Context): NetworkOverview {
+        var rawLanV4 = ""
         var lanV4 = "未连接"
+        var lanSubnetMask = ""
+        var lanPrefixLength = 0
+        var lanBroadcast = ""
+        var lanGateway = ""
+        var lanNetworkCidr = ""
+
+        var rawLanV6 = ""
         var lanV6 = "未配置"
+        var lanPrefixLengthV6 = 0
         var ifaceName = "none"
+
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        val activeNet = cm?.activeNetwork
+        val linkProps = cm?.getLinkProperties(activeNet)
+        val caps = cm?.getNetworkCapabilities(activeNet)
+        val isWifi = caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+        val isCell = caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
+
+        // Try to get default gateway from LinkProperties
+        if (linkProps != null) {
+            try {
+                for (route in linkProps.routes) {
+                    if (route.isDefaultRoute && route.hasGateway()) {
+                        val gw = route.gateway?.hostAddress
+                        if (!gw.isNullOrBlank()) {
+                            lanGateway = gw
+                            break
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
 
         try {
             val interfaces = NetworkInterface.getNetworkInterfaces()
-            val candidateV4 = mutableListOf<Pair<String, String>>() // name to ip
-            val candidateV6 = mutableListOf<Pair<String, String>>() // name to ip
+            val candidateV4 = mutableListOf<CandidateV4>()
+            val candidateV6 = mutableListOf<CandidateV6>()
 
             while (interfaces.hasMoreElements()) {
                 val iface = interfaces.nextElement()
                 if (iface.isLoopback || !iface.isUp) continue
-                val addrs = iface.inetAddresses
-                while (addrs.hasMoreElements()) {
-                    val addr = addrs.nextElement()
+                for (ifaceAddr in iface.interfaceAddresses) {
+                    val addr = ifaceAddr.address
+                    val prefix = ifaceAddr.networkPrefixLength.toInt()
                     if (addr is Inet4Address && !addr.isLoopbackAddress) {
                         val ip = addr.hostAddress ?: continue
-                        candidateV4.add(iface.name to ip)
+                        val bcast = ifaceAddr.broadcast?.hostAddress ?: ""
+                        candidateV4.add(CandidateV4(iface.name, ip, prefix, bcast))
                     } else if (addr is Inet6Address && !addr.isLoopbackAddress && !addr.isLinkLocalAddress) {
                         val ip = addr.hostAddress ?: continue
-                        candidateV6.add(iface.name to ip)
+                        candidateV6.add(CandidateV6(iface.name, ip, prefix))
                     }
                 }
             }
 
-            // Prioritize Wi-Fi interfaces (wlan, ap, p2p) over cellular (rmnet, ccmnni, pdp, tun) for IPv4
-            fun isWifiIface(name: String) = name.contains("wlan", ignoreCase = true) ||
-                    name.contains("ap", ignoreCase = true) ||
-                    name.contains("p2p", ignoreCase = true)
-
-            fun isCellularIface(name: String) = name.contains("rmnet", ignoreCase = true) ||
-                    name.contains("pdp", ignoreCase = true) ||
-                    name.contains("ccmnni", ignoreCase = true)
-
-            val wifiCandidateV4 = candidateV4.firstOrNull { isWifiIface(it.first) }
-            if (wifiCandidateV4 != null) {
-                lanV4 = wifiCandidateV4.second
-                ifaceName = wifiCandidateV4.first
-            } else {
-                val nonCellularCandidateV4 = candidateV4.firstOrNull { !isCellularIface(it.first) }
-                if (nonCellularCandidateV4 != null) {
-                    lanV4 = nonCellularCandidateV4.second
-                    ifaceName = nonCellularCandidateV4.first
-                } else if (candidateV4.isNotEmpty()) {
-                    lanV4 = candidateV4.first().second
-                    ifaceName = candidateV4.first().first
+            // Check if active network's LinkProperties directly has an IPv4 LinkAddress
+            var chosenV4: CandidateV4? = null
+            if (linkProps != null) {
+                for (la in linkProps.linkAddresses) {
+                    val addr = la.address
+                    if (addr is Inet4Address && !addr.isLoopbackAddress) {
+                        val ip = addr.hostAddress ?: continue
+                        val prefix = la.prefixLength
+                        val bcast = candidateV4.firstOrNull { it.ip == ip }?.broadcast ?: ""
+                        chosenV4 = CandidateV4(linkProps.interfaceName ?: "active", ip, prefix, bcast)
+                        break
+                    }
                 }
             }
 
-            // Prioritize Wi-Fi interfaces for IPv6 as well
-            val wifiCandidateV6 = candidateV6.firstOrNull { isWifiIface(it.first) }
-            if (wifiCandidateV6 != null) {
-                lanV6 = wifiCandidateV6.second
-            } else {
-                val nonCellularCandidateV6 = candidateV6.firstOrNull { !isCellularIface(it.first) }
-                if (nonCellularCandidateV6 != null) {
-                    lanV6 = nonCellularCandidateV6.second
-                } else if (candidateV6.isNotEmpty()) {
-                    lanV6 = candidateV6.first().second
+            // If not found in LinkProperties, pick the best interface candidate
+            if (chosenV4 == null) {
+                fun isWifiIface(name: String) = name.contains("wlan", ignoreCase = true) ||
+                        name.contains("ap", ignoreCase = true) ||
+                        name.contains("p2p", ignoreCase = true)
+
+                fun isCellularIface(name: String) = name.contains("rmnet", ignoreCase = true) ||
+                        name.contains("pdp", ignoreCase = true) ||
+                        name.contains("ccmnni", ignoreCase = true)
+
+                chosenV4 = candidateV4.firstOrNull { isWifiIface(it.ifaceName) }
+                    ?: candidateV4.firstOrNull { !isCellularIface(it.ifaceName) }
+                    ?: candidateV4.firstOrNull()
+            }
+
+            if (chosenV4 != null) {
+                rawLanV4 = chosenV4.ip
+                lanPrefixLength = chosenV4.prefixLength
+                lanV4 = if (lanPrefixLength in 1..32) "${chosenV4.ip}/$lanPrefixLength" else chosenV4.ip
+                lanSubnetMask = prefixLengthToSubnetMask(lanPrefixLength)
+                lanNetworkCidr = calculateSubnetCidr(chosenV4.ip, lanPrefixLength)
+                lanBroadcast = chosenV4.broadcast.ifEmpty { calculateBroadcast(chosenV4.ip, lanPrefixLength) }
+                ifaceName = chosenV4.ifaceName
+            }
+
+            // Check IPv6 from linkProps or candidate list
+            var chosenV6: CandidateV6? = null
+            if (linkProps != null) {
+                for (la in linkProps.linkAddresses) {
+                    val addr = la.address
+                    if (addr is Inet6Address && !addr.isLoopbackAddress && !addr.isLinkLocalAddress) {
+                        val ip = addr.hostAddress ?: continue
+                        chosenV6 = CandidateV6(linkProps.interfaceName ?: "active", ip, la.prefixLength)
+                        break
+                    }
                 }
+            }
+
+            if (chosenV6 == null) {
+                fun isWifiIface(name: String) = name.contains("wlan", ignoreCase = true) ||
+                        name.contains("ap", ignoreCase = true) ||
+                        name.contains("p2p", ignoreCase = true)
+
+                fun isCellularIface(name: String) = name.contains("rmnet", ignoreCase = true) ||
+                        name.contains("pdp", ignoreCase = true) ||
+                        name.contains("ccmnni", ignoreCase = true)
+
+                chosenV6 = candidateV6.firstOrNull { isWifiIface(it.ifaceName) }
+                    ?: candidateV6.firstOrNull { !isCellularIface(it.ifaceName) }
+                    ?: candidateV6.firstOrNull()
+            }
+
+            if (chosenV6 != null) {
+                rawLanV6 = chosenV6.ip
+                lanPrefixLengthV6 = chosenV6.prefixLength
+                lanV6 = if (lanPrefixLengthV6 in 1..128) "${chosenV6.ip}/$lanPrefixLengthV6" else chosenV6.ip
+                if (ifaceName == "none") ifaceName = chosenV6.ifaceName
             }
         } catch (_: Exception) {}
 
@@ -145,12 +298,6 @@ object NetworkInfoScanner {
         var cellularType = "未知"
         var cellularRssi = -110
         var cellularLevel = 0
-
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-        val activeNet = cm?.activeNetwork
-        val caps = cm?.getNetworkCapabilities(activeNet)
-        val isWifi = caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
-        val isCell = caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
 
         if (telephonyManager != null) {
             try {
